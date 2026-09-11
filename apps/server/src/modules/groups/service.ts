@@ -10,6 +10,7 @@ import { Message } from "../../models/Message";
 import { User } from "../../models/User";
 import { emitToUsers } from "../../realtime/bus";
 import { directKeyOf, getChat, requireMembership } from "../chats/service";
+import { claimAvatar, deleteFiles } from "../files/service";
 import { activeMemberIds, toMessage } from "../messages/service";
 import { PUBLIC_USER_FIELDS, presenceOf } from "../users/presence";
 
@@ -154,6 +155,18 @@ export async function updateGroup(userId: Id, chatId: string, patch: UpdateGroup
 
   await conv.save();
   for (const [event, value] of events) await postSystemMessage(conv._id, userId, event, [], value);
+  await notifyUpdated(conv._id);
+  return getGroupInfo(userId, chatId);
+}
+
+export async function setGroupAvatar(userId: Types.ObjectId, chatId: string, fileId: string | null) {
+  const { conv, member } = await loadGroup(chatId, userId);
+  assertAllowed(conv, member, "editInfo");
+  const previous = conv.avatarFileId;
+  conv.avatarFileId = fileId ? await claimAvatar(userId, fileId) : null;
+  await conv.save();
+  if (previous && !sameId(previous, conv.avatarFileId)) await deleteFiles([previous]);
+  await postSystemMessage(conv._id, userId, "photo_changed", [], fileId ? undefined : "removed");
   await notifyUpdated(conv._id);
   return getGroupInfo(userId, chatId);
 }

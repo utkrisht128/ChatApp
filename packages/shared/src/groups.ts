@@ -12,6 +12,7 @@ export const SYSTEM_EVENTS = [
   "renamed",
   "description_changed",
   "permissions_changed",
+  "photo_changed",
 ] as const;
 export type SystemEvent = (typeof SYSTEM_EVENTS)[number];
 export type SystemInfo = { event: SystemEvent; actorId: string; targetIds: string[]; value?: string };
@@ -81,5 +82,7 @@ export function describeSystemEvent(s: SystemInfo, nameOf: (id: string, asTarget
       return `${actor} changed the group description`;
     case "permissions_changed":
       return `${actor} changed the group settings`;
+    case "photo_changed":
+      return s.value === "removed" ? `${actor} removed the group photo` : `${actor} changed the group photo`;
   }
 }

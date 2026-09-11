@@ -4,6 +4,8 @@ import { createApp } from "./app";
 import { env, isProd } from "./config/env";
 import { connectDb, syncIndexes } from "./lib/db";
 import { logger } from "./lib/logger";
+import { storage } from "./lib/storage";
+import { startFileJanitor } from "./modules/files/service";
 import { createRealtime } from "./realtime";
 
 process.on("unhandledRejection", (reason) => logger.error({ err: reason }, "Unhandled promise rejection"));
@@ -16,6 +18,8 @@ async function main() {
   // Fail fast: without a database the service is useless, and Render will restart it.
   await connectDb(env.MONGODB_URI);
   if (isProd) await syncIndexes();
+  await storage.ensureIndexes();
+  const stopJanitor = startFileJanitor();
 
   const server = http.createServer(createApp());
   // Render's load balancer keeps connections alive for up to 60s+; outlive it to avoid 502s.
@@ -30,6 +34,7 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, "Shutting down gracefully");
+    stopJanitor();
     const force = setTimeout(() => {
       logger.warn("Forced exit after shutdown timeout");
       process.exit(1);

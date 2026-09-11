@@ -1,5 +1,5 @@
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
-import { messagePreview, type ChatSummary, type Message, type MessagePage, type Receipt } from "@chat/shared";
+import { summarizeMessage, type ChatSummary, type Message, type MessagePage, type Receipt } from "@chat/shared";
 import { chatKeys, patchChatInCache, type ChatPages } from "@/features/chats/api";
 import { useOutbox } from "@/stores/outbox";
 
@@ -14,7 +14,7 @@ export type MessagePages = InfiniteData<MessagePage, string | null>;
 
 const byId = (a: Message, b: Message) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 // System messages carry server-rendered text in `body`, so the same preview works for them.
-const previewFor = (m: Message) => (m.deletedAt ? "Message deleted" : messagePreview(m.body));
+const previewFor = (m: Message) => (m.deletedAt ? "Message deleted" : summarizeMessage(m));
 
 function mapPages(qc: QueryClient, chatId: string, fn: (pages: MessagePage[]) => MessagePage[]) {
   qc.setQueryData<MessagePages>(messageKeys.list(chatId), (data) => (data ? { ...data, pages: fn(data.pages) } : data));

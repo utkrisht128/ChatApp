@@ -2,6 +2,7 @@ import { z } from "zod";
 import { objectIdSchema, type MessageType } from "./chats";
 import type { Page } from "./api";
 import type { SystemInfo } from "./groups";
+import { attachmentIcon, attachmentInputSchema, attachmentLabel, MAX_ATTACHMENTS, type Attachment, type FileKind } from "./files";
 
 export const MAX_MESSAGE_LENGTH = 4000;
 /** Messages can be edited for this long after sending. */
@@ -23,12 +24,24 @@ const bodySchema = z
 /** Client-generated id that makes sending idempotent (safe to retry). */
 export const clientIdSchema = z.string().regex(/^[\w-]{8,64}$/, "Invalid client id");
 
-export const sendMessageSchema = z.strictObject({
-  clientId: clientIdSchema,
-  body: bodySchema,
-  replyToId: objectIdSchema.optional(),
-});
+export const sendMessageSchema = z
+  .strictObject({
+    clientId: clientIdSchema,
+    /** Optional when attachments are present (it becomes the caption). */
+    body: z.string().trim().max(MAX_MESSAGE_LENGTH, `Messages are limited to ${MAX_MESSAGE_LENGTH} characters`).default(""),
+    replyToId: objectIdSchema.optional(),
+    attachments: z.array(attachmentInputSchema).max(MAX_ATTACHMENTS).default([]),
+  })
+  .refine((m) => m.body.length > 0 || m.attachments.length > 0, { message: "Message can't be empty", path: ["body"] });
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
+
+/** Chat-list preview for any message: text, attachment label, or both ("📷 Look at this"). */
+export function summarizeMessage(m: { body: string; attachments: { kind: FileKind; name: string; durationMs?: number }[] }) {
+  const text = messagePreview(m.body);
+  const first = m.attachments[0];
+  if (!first) return text;
+  return text ? `${attachmentIcon(first.kind)} ${text}` : attachmentLabel(m.attachments);
+}
 
 export const editMessageSchema = z.strictObject({ body: bodySchema });
 
@@ -63,6 +76,7 @@ export type Message = {
   reactions: Reaction[];
   mentions: string[];
   forwarded: boolean;
+  attachments: Attachment[];
   /** Present on type "system" (e.g. "Alice added Bob"); `body` then holds a server-rendered fallback. */
   system: SystemInfo | null;
   createdAt: string;

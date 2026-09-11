@@ -15,6 +15,15 @@ export function useUpdateProfile() {
   });
 }
 
+/** Applies an uploaded photo (or null to remove it). Errors are reported by the caller. */
+export function useSetAvatar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (fileId: string | null) => api<{ user: Me }>("/users/me/avatar", { method: "PUT", body: { fileId } }).then((r) => r.user),
+    onSuccess: (user) => qc.setQueryData(meKey, user),
+  });
+}
+
 /** Optimistic: toggles flip instantly and roll back if the server rejects them. */
 export function useUpdateSettings() {
   const qc = useQueryClient();

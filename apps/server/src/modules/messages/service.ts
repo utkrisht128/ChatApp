@@ -2,6 +2,8 @@ import { Types } from "mongoose";
 import {
   EDIT_WINDOW_MS,
   messagePreview,
+  summarizeMessage,
+  type FileKind,
   type Message as MessageDTO,
   type MessagePage,
   type MessageType,
@@ -15,8 +17,10 @@ import { Conversation } from "../../models/Conversation";
 import { Member } from "../../models/Member";
 import { Message, type MessageFields } from "../../models/Message";
 import { User } from "../../models/User";
+import { storage } from "../../lib/storage";
 import { emitToUsers } from "../../realtime/bus";
 import { requireMembership } from "../chats/service";
+import { claimAttachments, deleteFiles, toAttachment } from "../files/service";
 
 type MessageLean = MessageFields & { _id: Types.ObjectId };
 
@@ -25,6 +29,11 @@ const DELETED_PREVIEW = "Message deleted";
 const messageNotFound = () => notFound("MESSAGE_NOT_FOUND", "Message not found");
 
 const previewOf = messagePreview;
+const summaryOf = (m: { body: string; attachments?: { kind: string; name?: string | null; durationMs?: number | null }[] | null }) =>
+  summarizeMessage({
+    body: m.body,
+    attachments: (m.attachments ?? []).map((a) => ({ kind: a.kind as FileKind, name: a.name ?? "file", durationMs: a.durationMs ?? undefined })),
+  });
 
 export function toMessage(m: MessageLean): MessageDTO {
   const grouped = new Map<string, string[]>();
@@ -40,6 +49,7 @@ export function toMessage(m: MessageLean): MessageDTO {
     reactions: [...grouped].map(([emoji, userIds]) => ({ emoji, userIds })),
     mentions: (m.mentions ?? []).map(String),
     forwarded: Boolean(m.forwarded),
+    attachments: m.deletedAt ? [] : (m.attachments ?? []).map(toAttachment),
     system: m.system
       ? {
           event: m.system.event as SystemEvent,
@@ -136,26 +146,31 @@ export async function sendMessage(senderId: Types.ObjectId, chatId: string, inpu
   if (input.replyToId) {
     const target = await Message.findOne({ _id: input.replyToId, conversationId: conv._id, hiddenFor: { $ne: senderId } }).lean<MessageLean>();
     if (!target) throw notFound("MESSAGE_NOT_FOUND", "The message you're replying to no longer exists");
-    replyTo = { messageId: target._id, senderId: target.senderId, preview: target.deletedAt ? DELETED_PREVIEW : previewOf(target.body) };
+    replyTo = { messageId: target._id, senderId: target.senderId, preview: target.deletedAt ? DELETED_PREVIEW : summaryOf(target) };
   }
+
+  const files = await claimAttachments(senderId, conv._id, input.attachments);
+  const type = (files.subdocs[0]?.kind ?? "text") as MessageType;
 
   let doc;
   try {
-    doc = await Message.create({ conversationId: conv._id, senderId, clientId: input.clientId, type: "text", body: input.body, replyTo });
+    doc = await Message.create({ conversationId: conv._id, senderId, clientId: input.clientId, type, body: input.body, replyTo, attachments: files.subdocs });
   } catch (err) {
+    await files.release();
     if ((err as { code?: number }).code === 11000) {
       const dup = await Message.findOne({ senderId, clientId: input.clientId }).lean<MessageLean>();
       if (dup) return { message: toMessage(dup), created: false };
     }
     throw err;
   }
+  await storage.update(files.fileIds, { messageId: doc._id });
 
   const at = doc.createdAt;
   await Promise.all([
     // Conditional so concurrent sends can never leave an older message as the "last" one.
     Conversation.updateOne(
       { _id: conv._id, $or: [{ lastMessage: null }, { "lastMessage.messageId": { $lt: doc._id } }] },
-      { $set: { lastMessage: { messageId: doc._id, senderId, preview: previewOf(input.body), type: "text", createdAt: at } }, $max: { lastMessageAt: at } },
+      { $set: { lastMessage: { messageId: doc._id, senderId, preview: summaryOf(doc), type, createdAt: at } }, $max: { lastMessageAt: at } },
     ),
     Member.updateMany(
       { conversationId: conv._id, leftAt: null, userId: { $ne: senderId } },
@@ -221,11 +236,15 @@ export async function deleteMessage(userId: Id, messageId: string, scope: "me" |
   if (msg.type === "system") throw badRequest("Group events can't be deleted for everyone");
   if (!sameId(msg.senderId, userId)) throw forbidden("You can only delete your own messages for everyone");
   if (msg.deletedAt) return;
+  const fileIds = msg.attachments.flatMap((a) => [a.fileId, a.thumbFileId]);
   msg.deletedAt = new Date();
   msg.body = "";
   msg.reactions = [] as never;
   msg.mentions = [] as never;
+  msg.attachments = [] as never;
   await msg.save();
+  // Deleted for everyone means the files go too (and the sender gets their quota back).
+  await deleteFiles(fileIds);
   // Quotes of the deleted message must not keep showing its text.
   await Promise.all([
     Conversation.updateOne({ _id: msg.conversationId, "lastMessage.messageId": msg._id }, { $set: { "lastMessage.preview": DELETED_PREVIEW } }),

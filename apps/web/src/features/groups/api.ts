@@ -58,6 +58,19 @@ export const useSetRole = (chatId: string) =>
     groupReq("PATCH", `/groups/${chatId}/members/${userId}`, { role }),
   );
 
+/** Applies an uploaded group photo (or null to remove). Errors are reported by the caller. */
+export function useSetGroupAvatar(chatId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (fileId: string | null) => api<{ group: GroupInfo }>(`/groups/${chatId}/avatar`, { method: "PUT", body: { fileId } }).then((r) => r.group),
+    onSuccess: (group) => {
+      qc.setQueryData(groupKey(chatId), group);
+      void qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
+      void qc.invalidateQueries({ queryKey: chatKeys.lists });
+    },
+  });
+}
+
 export function useLeaveGroup(chatId: string) {
   const qc = useQueryClient();
   return useMutation({

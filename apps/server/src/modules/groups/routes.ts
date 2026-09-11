@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { addMembersSchema, createGroupSchema, setRoleSchema, updateGroupSchema } from "@chat/shared";
+import { addMembersSchema, createGroupSchema, setAvatarSchema, setRoleSchema, updateGroupSchema } from "@chat/shared";
 import { noContent, ok } from "../../lib/http";
 import { authOf } from "../../middleware/auth";
 import { limiter } from "../../middleware/security";
@@ -23,6 +23,11 @@ groupsRouter.get("/:chatId", async (req, res) => {
 groupsRouter.patch("/:chatId", async (req, res) => {
   const patch = updateGroupSchema.parse(req.body);
   ok(res, { group: await groups.updateGroup(authOf(req).user._id, chatId(req), patch) });
+});
+
+groupsRouter.put("/:chatId/avatar", async (req, res) => {
+  const { fileId } = setAvatarSchema.parse(req.body);
+  ok(res, { group: await groups.setGroupAvatar(authOf(req).user._id, chatId(req), fileId) });
 });
 
 groupsRouter.post("/:chatId/members", async (req, res) => {

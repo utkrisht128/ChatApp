@@ -10,7 +10,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { ErrorState } from "@/components/ui/States";
 import { cn } from "@/lib/cn";
 import { useOutbox, type PendingMessage } from "@/stores/outbox";
-import { deliver, flattenMessages, markChatRead, useMessages, useReact, useReceipts } from "./api";
+import { deliver, discardPending, flattenMessages, markChatRead, useMessages, useReact, useReceipts } from "./api";
 import { MessageBubble } from "./MessageBubble";
 import { buildRows } from "./rows";
 import { statusOf } from "./status";
@@ -176,7 +176,7 @@ export function MessageList({ chat, meId, nameOf, personOf, onReply, onEdit, onD
 
   const onReact = useCallback((m: Message, emoji: string | null) => react.mutate({ message: m, emoji }), [react]);
   const onRetry = useCallback((p: PendingMessage) => void deliver(qc, p), [qc]);
-  const onDiscard = useCallback((p: PendingMessage) => useOutbox.getState().remove(p.clientId), []);
+  const onDiscard = useCallback((p: PendingMessage) => discardPending(p.clientId), []);
 
   // Arrow keys move between messages (one tab stop for the whole list).
   const onKeyDown = (e: KeyboardEvent) => {

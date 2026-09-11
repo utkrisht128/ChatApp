@@ -10,6 +10,7 @@ import { useResolvedTheme } from "@/stores/theme";
 import { cn } from "@/lib/cn";
 import { formatClock } from "@/lib/format";
 import type { PendingMessage } from "@/stores/outbox";
+import { AttachmentsView } from "./Attachments";
 import { Linkify } from "./Linkify";
 import { QuickReactions, ReactionChips, ReactionPopover } from "./Reactions";
 import type { DeliveryStatus } from "./status";
@@ -95,6 +96,10 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
   const { message: m, pending, mine, first, last, status, meId, nameOf, highlighted, sender } = props;
   const touch = useIsTouch();
   const theme = useResolvedTheme();
+  const isMedia = (a: { kind: string }) => a.kind === "image" || a.kind === "video";
+  const hasMedia = m.attachments.some(isMedia);
+  // Photos/videos with no caption show the time over the image instead of below it.
+  const mediaOnly = hasMedia && !m.body && m.attachments.every(isMedia);
   const deleted = Boolean(m.deletedAt);
   const interactive = !pending && !deleted;
   const myReaction = m.reactions.find((r) => r.userIds.includes(meId))?.emoji ?? null;
@@ -140,7 +145,8 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
             {...swipe.handlers}
             style={swipe.style}
             className={cn(
-              "relative min-w-0 touch-pan-y rounded-2xl px-3 pt-1.5 pb-1 shadow-bubble outline-offset-2 transition-[background-color,box-shadow] select-text [-webkit-touch-callout:none]",
+              hasMedia ? "p-1" : "px-3 pt-1.5 pb-1",
+              "relative min-w-0 touch-pan-y rounded-2xl shadow-bubble outline-offset-2 transition-[background-color,box-shadow] select-text [-webkit-touch-callout:none]",
               mine ? "bg-bubble-out text-bubble-out-fg" : "bg-bubble-in text-bubble-in-fg",
               mine ? cn(!first && "rounded-tr-md", !last && "rounded-br-md") : cn(!first && "rounded-tl-md", !last && "rounded-bl-md"),
               pending?.status === "failed" && "opacity-80",
@@ -151,7 +157,7 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
               {who}, {time}:{" "}
             </span>
             {sender && first && (
-              <p aria-hidden className="mb-0.5 truncate text-[13px] font-semibold" style={{ color: nameColor(sender.id, theme) }}>
+              <p aria-hidden className={cn("mb-0.5 truncate text-[13px] font-semibold", hasMedia && "px-2 pt-1")} style={{ color: nameColor(sender.id, theme) }}>
                 {sender.name}
               </p>
             )}
@@ -168,22 +174,30 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
                 <span className="sr-only">— jump to original message</span>
               </button>
             )}
-            <div className="flex flex-wrap items-end justify-end gap-x-2">
-              {deleted ? (
-                <p className="flex min-w-0 flex-auto items-center gap-1.5 py-0.5 text-[15px] italic opacity-75">
-                  <Ban className="size-4 shrink-0" /> {mine ? "You deleted this message" : "This message was deleted"}
-                </p>
-              ) : (
-                <p className="min-w-0 flex-auto py-0.5 text-[15px] leading-snug break-words whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  <Linkify text={m.body} linkClassName={cn("underline underline-offset-2", mine ? "text-white" : "text-accent")} />
-                </p>
-              )}
-              <span className={cn("ml-auto flex shrink-0 translate-y-0.5 items-center gap-1 text-[11px] leading-5", mine ? "text-bubble-out-muted" : "text-bubble-in-muted")}>
-                {m.editedAt && !deleted && <span>edited</span>}
+            {!deleted && m.attachments.length > 0 && <AttachmentsView attachments={m.attachments} mine={mine} pending={pending?.attachments} />}
+            {mediaOnly && !deleted ? (
+              <span className="absolute right-2.5 bottom-2.5 flex items-center gap-1 rounded-full bg-black/50 px-1.5 text-[11px] leading-5 text-white">
                 <time dateTime={m.createdAt}>{time}</time>
                 {mine && status && <StatusIcon status={status} />}
               </span>
-            </div>
+            ) : (
+              <div className={cn("flex flex-wrap items-end justify-end gap-x-2", hasMedia && "px-2 pt-1 pb-0.5")}>
+                {deleted ? (
+                  <p className="flex min-w-0 flex-auto items-center gap-1.5 py-0.5 text-[15px] italic opacity-75">
+                    <Ban className="size-4 shrink-0" /> {mine ? "You deleted this message" : "This message was deleted"}
+                  </p>
+                ) : m.body ? (
+                  <p className="min-w-0 flex-auto py-0.5 text-[15px] leading-snug break-words whitespace-pre-wrap [overflow-wrap:anywhere]">
+                    <Linkify text={m.body} linkClassName={cn("underline underline-offset-2", mine ? "text-white" : "text-accent")} />
+                  </p>
+                ) : null}
+                <span className={cn("ml-auto flex shrink-0 translate-y-0.5 items-center gap-1 text-[11px] leading-5", mine ? "text-bubble-out-muted" : "text-bubble-in-muted")}>
+                  {m.editedAt && !deleted && <span>edited</span>}
+                  <time dateTime={m.createdAt}>{time}</time>
+                  {mine && status && <StatusIcon status={status} />}
+                </span>
+              </div>
+            )}
           </div>
         </ActionMenu>
 

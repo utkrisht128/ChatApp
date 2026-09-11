@@ -1,7 +1,8 @@
 import type { z } from "zod";
 import type { PublicUser, updateProfileSchema, updateSettingsSchema } from "@chat/shared";
 import { conflict, notFound } from "../../lib/errors";
-import { escapeRegex, type Id } from "../../lib/ids";
+import { escapeRegex, sameId, type Id } from "../../lib/ids";
+import { claimAvatar, deleteFiles } from "../files/service";
 import { toPublicUser } from "../../lib/serialize";
 import { Conversation } from "../../models/Conversation";
 import { User, type UserDoc } from "../../models/User";
@@ -35,6 +36,14 @@ export async function updateSettings(user: UserDoc, patch: z.output<typeof updat
   const updated = await User.findByIdAndUpdate(user._id, { $set: set }, { returnDocument: "after", runValidators: true });
   if (!updated) throw notFound("USER_NOT_FOUND", "User not found");
   return updated;
+}
+
+export async function setAvatar(user: UserDoc, fileId: string | null) {
+  const previous = user.avatarFileId;
+  user.avatarFileId = fileId ? await claimAvatar(user._id, fileId) : null;
+  await user.save();
+  if (previous && !sameId(previous, user.avatarFileId)) await deleteFiles([previous]);
+  return user;
 }
 
 /** Username prefix or display-name substring. Input is regex-escaped, so it can't inject patterns. */

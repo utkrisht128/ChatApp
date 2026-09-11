@@ -13,7 +13,8 @@ import { TextAreaField, TextField } from "@/components/ui/TextField";
 import { useCurrentUser } from "@/features/auth/api";
 import { useOpenDirectChat } from "@/features/chats/api";
 import { formatLastSeen } from "@/lib/format";
-import { useAddMembers, useGroup, useLeaveGroup, useRemoveMember, useSetRole, useUpdateGroup } from "./api";
+import { AvatarPicker } from "@/components/AvatarPicker";
+import { useAddMembers, useGroup, useLeaveGroup, useRemoveMember, useSetGroupAvatar, useSetRole, useUpdateGroup } from "./api";
 import { UserPicker } from "./UserPicker";
 
 const PERMISSION_OPTIONS: { value: GroupPermission; label: string }[] = [
@@ -133,6 +134,7 @@ function MemberRow({ m, group, chat }: { m: GroupMember; group: GroupInfo; chat:
 export function GroupDetails({ chat, quickActions }: { chat: ChatSummary; quickActions: React.ReactNode }) {
   const group = useGroup(chat.id);
   const update = useUpdateGroup(chat.id);
+  const setAvatar = useSetGroupAvatar(chat.id);
   const leave = useLeaveGroup(chat.id);
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
@@ -159,7 +161,11 @@ export function GroupDetails({ chat, quickActions }: { chat: ChatSummary; quickA
   return (
     <div className="flex flex-col gap-6 pb-8">
       <div className="flex flex-col items-center px-6 pt-8 text-center">
-        <Avatar name={g.name} src={g.avatarUrl} seed={g.id} size="2xl" />
+        {canEdit ? (
+          <AvatarPicker name={g.name} src={g.avatarUrl} seed={g.id} apply={(fileId) => setAvatar.mutateAsync(fileId)} />
+        ) : (
+          <Avatar name={g.name} src={g.avatarUrl} seed={g.id} size="2xl" />
+        )}
         <h2 className="mt-4 text-xl font-semibold break-words">{g.name}</h2>
         <p className="text-sm text-muted">
           Group · {g.memberCount} member{g.memberCount === 1 ? "" : "s"}

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { updateProfileSchema, updateSettingsSchema, userSearchQuerySchema } from "@chat/shared";
+import { setAvatarSchema, updateProfileSchema, updateSettingsSchema, userSearchQuerySchema } from "@chat/shared";
 import { ok } from "../../lib/http";
 import { toMe } from "../../lib/serialize";
 import { authOf } from "../../middleware/auth";
@@ -23,6 +23,12 @@ usersRouter.patch("/me", async (req, res) => {
 usersRouter.patch("/me/settings", async (req, res) => {
   const patch = updateSettingsSchema.parse(req.body);
   ok(res, { user: toMe(await users.updateSettings(authOf(req).user, patch)) });
+});
+
+/** Set (upload first via POST /api/files?purpose=avatar) or remove (null) your profile photo. */
+usersRouter.put("/me/avatar", async (req, res) => {
+  const { fileId } = setAvatarSchema.parse(req.body);
+  ok(res, { user: toMe(await users.setAvatar(authOf(req).user, fileId)) });
 });
 
 usersRouter.get("/:username", async (req, res) => {

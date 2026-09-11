@@ -16,7 +16,8 @@ import { cn } from "@/lib/cn";
 import { fromServer, validate, type FieldErrors } from "@/lib/forms";
 import { SplitView } from "@/layouts/SplitView";
 import { useThemeStore, type ThemePreference } from "@/stores/theme";
-import { useUpdateProfile, useUpdateSettings } from "./api";
+import { AvatarPicker } from "@/components/AvatarPicker";
+import { useSetAvatar, useUpdateProfile, useUpdateSettings } from "./api";
 
 type Section = { to: string; label: string; description: string; icon: ComponentType<{ className?: string }> };
 
@@ -109,6 +110,7 @@ function SettingsPage({ title, children }: { title: string; children: ReactNode 
 export function ProfileSettings() {
   const me = useCurrentUser();
   const update = useUpdateProfile();
+  const setAvatar = useSetAvatar();
   const initial = { displayName: me.displayName, username: me.username, bio: me.bio };
   const [values, setValues] = useState(initial);
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -136,7 +138,7 @@ export function ProfileSettings() {
   return (
     <SettingsPage title="Profile">
       <div className="flex flex-col items-center gap-3 text-center">
-        <Avatar name={values.displayName || me.displayName} src={me.avatarUrl} seed={me.id} size="2xl" />
+        <AvatarPicker name={values.displayName || me.displayName} src={me.avatarUrl} seed={me.id} apply={(fileId) => setAvatar.mutateAsync(fileId)} />
         <div>
           <p className="text-lg font-semibold">{me.displayName}</p>
           <p className="text-sm text-muted">@{me.username}</p>

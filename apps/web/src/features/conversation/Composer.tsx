@@ -1,7 +1,11 @@
 import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { CornerUpLeft, Pencil, SendHorizontal, Smile, X } from "lucide-react";
-import { MAX_MESSAGE_LENGTH, type Message } from "@chat/shared";
+import { Camera, CornerUpLeft, FileText, Image as ImageIcon, Mic, Paperclip, Pencil, SendHorizontal, Smile, X } from "lucide-react";
+import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH, type Message } from "@chat/shared";
+import { ActionDropdown } from "@/components/ui/ActionMenu";
 import { IconButton } from "@/components/ui/Button";
+import { DOCUMENT_ACCEPT } from "@/lib/media";
+import { AttachmentTray, toLocalFiles, type LocalFile } from "./AttachmentTray";
+import { VoiceRecorder, voiceSupported } from "./VoiceRecorder";
 import { Spinner } from "@/components/ui/Spinner";
 import { useMe } from "@/features/auth/api";
 import { useIsTouch, useMediaQuery } from "@/hooks/useMediaQuery";
@@ -97,6 +101,10 @@ type ComposerProps = {
   disabled?: boolean;
   /** When set, the composer is replaced by this explanation (e.g. admins-only group). */
   disabledReason?: string;
+  /** Picked files waiting to be sent (owned by the conversation so drag-and-drop can add to them). */
+  files: LocalFile[];
+  onFilesChange: (files: LocalFile[]) => void;
+  onSendVoice: (blob: Blob, durationMs: number, waveform: number[]) => void;
 };
 
 export function Composer(props: ComposerProps) {
@@ -110,7 +118,28 @@ export function Composer(props: ComposerProps) {
   return <ActiveComposer {...props} />;
 }
 
-function ActiveComposer({ chatId, onSend, replyTo, onCancelReply, editing, onCancelEdit, onSubmitEdit, onEditLast, nameOf, disabled }: ComposerProps) {
+function ActiveComposer({
+  chatId,
+  onSend,
+  replyTo,
+  onCancelReply,
+  editing,
+  onCancelEdit,
+  onSubmitEdit,
+  onEditLast,
+  nameOf,
+  disabled,
+  files,
+  onFilesChange,
+  onSendVoice,
+}: ComposerProps) {
+  const [recording, setRecording] = useState(false);
+  const mediaInput = useRef<HTMLInputElement>(null);
+  const docInput = useRef<HTMLInputElement>(null);
+  const cameraInput = useRef<HTMLInputElement>(null);
+  const addFiles = (list: FileList | File[] | null) => {
+    if (list?.length) onFilesChange([...files, ...toLocalFiles(Array.from(list), files.length)]);
+  };
   const draft = useDrafts((s) => s.drafts[chatId] ?? "");
   const setDraft = useDrafts((s) => s.setDraft);
   const enterToSend = useMe().data?.settings.enterToSend ?? true;
@@ -152,11 +181,12 @@ function ActiveComposer({ chatId, onSend, replyTo, onCancelReply, editing, onCan
     if (!touch) ref.current?.focus();
   }, [chatId, touch]);
 
-  const canSubmit = value.trim().length > 0 && !disabled;
+  const hasFiles = files.length > 0 && !editing;
+  const canSubmit = (value.trim().length > 0 || hasFiles) && !disabled;
 
   const submit = () => {
     const text = value.trim();
-    if (!text || disabled) return;
+    if ((!text && !hasFiles) || disabled) return;
     if (editing) {
       if (text !== editing.body) onSubmitEdit(text);
       else onCancelEdit();
@@ -218,7 +248,34 @@ function ActiveComposer({ chatId, onSend, replyTo, onCancelReply, editing, onCan
           </IconButton>
         </div>
       )}
+      {!editing && <AttachmentTray files={files} onRemove={(id) => onFilesChange(files.filter((f) => f.id !== id))} />}
+      <input ref={mediaInput} type="file" accept="image/*,video/*" multiple hidden onChange={(e) => (addFiles(e.target.files), (e.target.value = ""))} />
+      <input ref={docInput} type="file" accept={DOCUMENT_ACCEPT} multiple hidden onChange={(e) => (addFiles(e.target.files), (e.target.value = ""))} />
+      <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={(e) => (addFiles(e.target.files), (e.target.value = ""))} />
+      {recording ? (
+        <VoiceRecorder
+          onCancel={() => setRecording(false)}
+          onSend={(blob, durationMs, waveform) => {
+            setRecording(false);
+            onSendVoice(blob, durationMs, waveform);
+          }}
+        />
+      ) : (
       <div className="flex items-end gap-1.5">
+        {!editing && (
+          <ActionDropdown
+            align="start"
+            actions={[
+              { id: "media", label: "Photos & videos", icon: ImageIcon, onSelect: () => mediaInput.current?.click() },
+              { id: "camera", label: "Camera", icon: Camera, onSelect: () => cameraInput.current?.click(), hidden: !touch },
+              { id: "doc", label: "Document", icon: FileText, onSelect: () => docInput.current?.click() },
+            ]}
+          >
+            <IconButton label="Attach files" className="mb-0.5" disabled={files.length >= MAX_ATTACHMENTS}>
+              <Paperclip />
+            </IconButton>
+          </ActionDropdown>
+        )}
         <IconButton
           data-emoji-toggle
           label={emojiOpen ? "Close emoji picker" : "Insert emoji"}
@@ -242,6 +299,13 @@ function ActiveComposer({ chatId, onSend, replyTo, onCancelReply, editing, onCan
               if (!editing && e.target.value) typing.ping();
             }}
             onKeyDown={onKeyDown}
+            onPaste={(e) => {
+              // Pasted screenshots/files go to the tray; pasted text behaves normally.
+              if (!editing && e.clipboardData.files.length) {
+                e.preventDefault();
+                addFiles(e.clipboardData.files);
+              }
+            }}
             onBlur={typing.stop}
             onFocus={() => touch && setEmojiOpen(false)}
             placeholder="Message"
@@ -250,19 +314,26 @@ function ActiveComposer({ chatId, onSend, replyTo, onCancelReply, editing, onCan
             className="scrollbar-thin max-h-40 w-full resize-none bg-transparent text-base leading-6 outline-none placeholder:text-subtle focus-visible:outline-none md:text-[15px]"
           />
         </div>
-        <IconButton
-          variant="primary"
-          size="lg"
-          label={editing ? "Save edit" : "Send message"}
-          disabled={!canSubmit}
-          onClick={submit}
-          // Keep focus in the textarea on mobile so the keyboard stays open after sending.
-          onPointerDown={(e) => e.preventDefault()}
-          className={cn("transition-transform", canSubmit ? "scale-100" : "scale-95")}
-        >
-          <SendHorizontal />
-        </IconButton>
+        {!canSubmit && !editing && voiceSupported() ? (
+          <IconButton variant="primary" size="lg" label="Record voice message" onClick={() => setRecording(true)}>
+            <Mic />
+          </IconButton>
+        ) : (
+          <IconButton
+            variant="primary"
+            size="lg"
+            label={editing ? "Save edit" : "Send message"}
+            disabled={!canSubmit}
+            onClick={submit}
+            // Keep focus in the textarea on mobile so the keyboard stays open after sending.
+            onPointerDown={(e) => e.preventDefault()}
+            className={cn("transition-transform", canSubmit ? "scale-100" : "scale-95")}
+          >
+            <SendHorizontal />
+          </IconButton>
+        )}
       </div>
+      )}
     </div>
   );
 }

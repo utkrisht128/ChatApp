@@ -1,5 +1,5 @@
 import { Schema, model, type HydratedDocument, type InferSchemaType } from "mongoose";
-import { MAX_MESSAGE_LENGTH, MESSAGE_TYPES, SYSTEM_EVENTS } from "@chat/shared";
+import { FILE_KINDS, MAX_MESSAGE_LENGTH, MESSAGE_TYPES, SYSTEM_EVENTS } from "@chat/shared";
 
 const replySchema = new Schema(
   {
@@ -16,6 +16,24 @@ const reactionSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, required: true },
     emoji: { type: String, required: true, maxlength: 16 },
+  },
+  { _id: false },
+);
+
+/** A file on a message. Type/size/name are copied from the stored file at send time. */
+const attachmentSchema = new Schema(
+  {
+    fileId: { type: Schema.Types.ObjectId, required: true },
+    kind: { type: String, enum: FILE_KINDS, required: true },
+    mime: { type: String, required: true },
+    size: { type: Number, required: true },
+    name: { type: String, default: "file", maxlength: 200 },
+    width: Number,
+    height: Number,
+    durationMs: Number,
+    waveform: { type: [Number], default: undefined },
+    placeholder: { type: String, maxlength: 4000 },
+    thumbFileId: { type: Schema.Types.ObjectId, default: null },
   },
   { _id: false },
 );
@@ -42,6 +60,7 @@ const messageSchema = new Schema(
     replyTo: { type: replySchema, default: null },
     forwarded: { type: Boolean, default: false },
     system: { type: systemSchema, default: null },
+    attachments: { type: [attachmentSchema], default: [] },
     reactions: { type: [reactionSchema], default: [] },
     /** Users who chose "delete for me". */
     hiddenFor: { type: [Schema.Types.ObjectId], default: [] },

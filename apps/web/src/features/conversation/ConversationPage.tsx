@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, MessageSquareOff } from "lucide-react";
+import { ArrowLeft, MessageSquareOff, Upload } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { EDIT_WINDOW_MS, type ChatSummary, type Message } from "@chat/shared";
 import { SidePanel } from "@/components/ui/Dialog";
@@ -17,6 +17,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ApiError } from "@/lib/api";
 import { useTypingUsers } from "@/stores/typing";
 import { useUi } from "@/stores/ui";
+import { toLocalFiles, type LocalFile } from "./AttachmentTray";
 import { ChatDetails } from "./ChatDetails";
 import { Composer } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
@@ -62,6 +63,10 @@ function Conversation({ chat }: { chat: ChatSummary }) {
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
+  const [files, setFiles] = useState<LocalFile[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const hasFilesIn = (e: DragEvent) => e.dataTransfer.types.includes("Files");
   const send = useSendMessage(chat.id);
   const edit = useEditMessage();
   const del = useDeleteMessage();
@@ -116,7 +121,36 @@ function Conversation({ chat }: { chat: ChatSummary }) {
 
   return (
     <div className="flex min-h-0 flex-1 max-md:animate-slide-in-right">
-      <section aria-label={`Conversation with ${chat.name}`} className="flex min-w-0 flex-1 flex-col bg-chat">
+      <section
+        aria-label={`Conversation with ${chat.name}`}
+        className="relative flex min-w-0 flex-1 flex-col bg-chat"
+        // Desktop drag-and-drop: a depth counter stops the overlay flickering over child elements.
+        onDragEnter={(e) => {
+          if (!canSend || !hasFilesIn(e)) return;
+          dragDepth.current += 1;
+          setDragging(true);
+        }}
+        onDragOver={(e) => canSend && hasFilesIn(e) && e.preventDefault()}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (!dragDepth.current) setDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!canSend || !hasFilesIn(e)) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          const dropped = Array.from(e.dataTransfer.files);
+          setFiles((prev) => [...prev, ...toLocalFiles(dropped, prev.length)]);
+        }}
+      >
+        {dragging && (
+          <div className="pointer-events-none absolute inset-3 z-30 grid animate-fade-in place-items-center rounded-3xl border-2 border-dashed border-primary bg-surface/85 backdrop-blur-sm">
+            <p className="flex flex-col items-center gap-2 text-center font-semibold text-accent">
+              <Upload className="size-8" /> Drop files to send to {chat.name}
+            </p>
+          </div>
+        )}
         <ConversationHeader chat={chat} subtitle={typingText} />
         <MessageList chat={chat} meId={me.id} nameOf={nameOf} personOf={personOf} onReply={onReply} onEdit={onEdit} onDelete={setDeleting} />
         <Composer
@@ -132,8 +166,15 @@ function Conversation({ chat }: { chat: ChatSummary }) {
             setEditing(null);
           }}
           onEditLast={editLast}
+          files={files}
+          onFilesChange={setFiles}
           onSend={(text) => {
-            send(text, replyTo);
+            send(text, replyTo, files.map((f) => ({ file: f.file, kind: f.kind, name: f.file.name })));
+            setReplyTo(null);
+            setFiles([]);
+          }}
+          onSendVoice={(blob, durationMs, waveform) => {
+            send("", replyTo, [{ file: blob, kind: "voice", name: "Voice message", durationMs, waveform }]);
             setReplyTo(null);
           }}
         />

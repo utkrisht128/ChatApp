@@ -1,10 +1,12 @@
 import { useCallback } from "react";
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { messagePreview, type Message, type MessagePage, type Receipt } from "@chat/shared";
+import { DEFAULT_MAX_UPLOAD_BYTES, summarizeMessage, type FileKind, type Message, type MessagePage, type Receipt } from "@chat/shared";
 import { patchChatInCache } from "@/features/chats/api";
 import { api, ApiError, errorMessage } from "@/lib/api";
-import { useOutbox, type PendingMessage } from "@/stores/outbox";
+import { mediaDuration, prepareImage, prepareVideo } from "@/lib/media";
+import { uploadBlob } from "@/lib/upload";
+import { pendingBlobs, useOutbox, type PendingAttachment, type PendingMessage } from "@/stores/outbox";
 import { messageKeys, removeMessage, replaceMessage, upsertMessage, type MessagePages } from "./cache";
 
 export function useMessages(chatId: string) {
@@ -38,20 +40,93 @@ function enqueue(chatId: string, task: () => Promise<void>) {
   return next;
 }
 
+class LostAttachmentError extends Error {}
+const aborts = new Map<string, AbortController>();
+
+/** Prepares (compress / poster) and uploads one attachment, recording progress in the outbox. */
+async function uploadAttachment(p: PendingMessage, a: PendingAttachment, signal: AbortSignal): Promise<PendingAttachment> {
+  if (a.fileId) return a;
+  const blob = pendingBlobs.get(a.localId);
+  if (!blob) throw new LostAttachmentError();
+  const outbox = useOutbox.getState();
+  let meta: Partial<PendingAttachment> = {};
+  let body: Blob = blob;
+
+  if (a.kind === "image" && blob instanceof File) {
+    const prepared = await prepareImage(blob).catch(() => null);
+    if (prepared) {
+      body = prepared.blob;
+      meta = { width: prepared.width, height: prepared.height, placeholder: prepared.placeholder };
+    }
+  } else if (a.kind === "video" && blob instanceof File) {
+    const v = await prepareVideo(blob);
+    meta = { width: v.width, height: v.height, durationMs: v.durationMs, placeholder: v.placeholder };
+    if (v.poster) {
+      const thumb = await uploadBlob(v.poster, { purpose: "thumb", kind: "image", chatId: p.chatId, name: "poster.jpg" }, { signal });
+      meta.thumbFileId = thumb.id;
+    }
+  } else if (a.kind === "audio" && a.durationMs === undefined) {
+    meta = { durationMs: await mediaDuration(blob) };
+  }
+  if (body.size > DEFAULT_MAX_UPLOAD_BYTES) throw new ApiError(413, "PAYLOAD_TOO_LARGE", `“${a.name}” is larger than 8 MB.`);
+
+  let last = 0;
+  const file = await uploadBlob(body, { purpose: "attachment", kind: a.kind, chatId: p.chatId, name: a.name }, {
+    signal,
+    onProgress: (f) => {
+      if (f - last >= 0.04 || f === 1) outbox.updateAttachment(p.clientId, a.localId, { progress: (last = f) });
+    },
+  });
+  const done = { ...meta, fileId: file.id, progress: 1 };
+  outbox.updateAttachment(p.clientId, a.localId, done);
+  return { ...a, ...done };
+}
+
 export function deliver(qc: QueryClient, p: PendingMessage) {
   useOutbox.getState().update(p.clientId, { status: "sending", error: undefined });
   return enqueue(p.chatId, async () => {
+    const current = useOutbox.getState().items.find((i) => i.clientId === p.clientId);
+    if (!current) return; // discarded while queued
+    const controller = new AbortController();
+    aborts.set(p.clientId, controller);
     try {
+      const uploaded = [];
+      for (const a of current.attachments) uploaded.push(await uploadAttachment(current, a, controller.signal));
       const { message } = await api<{ message: Message }>(`/chats/${p.chatId}/messages`, {
         method: "POST",
-        body: { clientId: p.clientId, body: p.body, ...(p.replyTo ? { replyToId: p.replyTo.id } : {}) },
+        body: {
+          clientId: p.clientId,
+          body: current.body,
+          ...(current.replyTo ? { replyToId: current.replyTo.id } : {}),
+          attachments: uploaded.map((a) => ({
+            fileId: a.fileId!,
+            ...(a.width ? { width: a.width } : {}),
+            ...(a.height ? { height: a.height } : {}),
+            ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}),
+            ...(a.waveform?.length ? { waveform: a.waveform } : {}),
+            ...(a.placeholder ? { placeholder: a.placeholder } : {}),
+            ...(a.thumbFileId ? { thumbFileId: a.thumbFileId } : {}),
+          })),
+        },
       });
       upsertMessage(qc, message);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (err instanceof LostAttachmentError) {
+        return useOutbox.getState().update(p.clientId, { status: "failed", retryable: false, error: "The attachment was lost when the page closed. Please send it again." });
+      }
       const retryable = !(err instanceof ApiError) || err.status === 0 || err.status >= 500 || err.status === 429;
       useOutbox.getState().update(p.clientId, { status: "failed", retryable, error: retryable ? undefined : errorMessage(err) });
+    } finally {
+      aborts.delete(p.clientId);
     }
   });
+}
+
+/** Stops an in-flight upload and forgets the message. */
+export function discardPending(clientId: string) {
+  aborts.get(clientId)?.abort();
+  useOutbox.getState().remove(clientId);
 }
 
 /** Retries everything that failed for transient reasons (called on reconnect / back online). */
@@ -59,15 +134,33 @@ export function retryFailed(qc: QueryClient) {
   for (const p of useOutbox.getState().items) if (p.status === "failed" && p.retryable) void deliver(qc, p);
 }
 
+export type OutgoingFile = { file: File | Blob; kind: FileKind; name: string; durationMs?: number; waveform?: number[] };
+
 export function useSendMessage(chatId: string) {
   const qc = useQueryClient();
   return useCallback(
-    (body: string, replyTo: Message | null) => {
+    (body: string, replyTo: Message | null, files: OutgoingFile[] = []) => {
+      const attachments: PendingAttachment[] = files.map((f) => {
+        const localId = crypto.randomUUID();
+        pendingBlobs.set(localId, f.file);
+        return {
+          localId,
+          kind: f.kind,
+          name: f.name,
+          size: f.file.size,
+          mime: f.file.type,
+          previewUrl: f.kind === "image" || f.kind === "video" || f.kind === "voice" || f.kind === "audio" ? URL.createObjectURL(f.file) : undefined,
+          progress: 0,
+          durationMs: f.durationMs,
+          waveform: f.waveform,
+        };
+      });
       const pending: PendingMessage = {
         clientId: crypto.randomUUID(),
         chatId,
         body,
-        replyTo: replyTo ? { id: replyTo.id, senderId: replyTo.senderId, preview: messagePreview(replyTo.body) } : null,
+        replyTo: replyTo ? { id: replyTo.id, senderId: replyTo.senderId, preview: summarizeMessage(replyTo) } : null,
+        attachments,
         createdAt: new Date().toISOString(),
         status: "sending",
         retryable: true,
