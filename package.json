@@ -1,0 +1,27 @@
+{
+  "name": "chatapp",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w @chat/server",
+    "dev:web": "npm run dev -w @chat/web",
+    "build": "npm run build -w @chat/server && npm run build -w @chat/web",
+    "build:server": "npm run build -w @chat/server",
+    "build:web": "npm run build -w @chat/web",
+    "start": "npm run start -w @chat/server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "typescript": "5.9.3"
+  }
+}
