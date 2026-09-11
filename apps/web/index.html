@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="Fast, private, real-time messaging." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>ChatApp</title>
+    <script>
+      // Apply the saved theme before first paint, so there's no light/dark flash.
+      (function () {
+        try {
+          var s = JSON.parse(localStorage.getItem("chatapp-theme") || "null");
+          var p = (s && s.state && s.state.preference) || "system";
+          var dark = p === "dark" || (p === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+          var r = document.documentElement;
+          r.classList.toggle("dark", dark);
+          r.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <noscript>ChatApp needs JavaScript to run.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -5,10 +5,12 @@ import { pinoHttp } from "pino-http";
 import { env } from "./config/env";
 import { isDbReady } from "./lib/db";
 import { logger } from "./lib/logger";
-import { authenticate } from "./middleware/auth";
+import { authenticate, requireAuth } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/error";
 import { apiLimiter, csrfGuard } from "./middleware/security";
 import { authRouter } from "./modules/auth/routes";
+import { chatsRouter } from "./modules/chats/routes";
+import { usersRouter } from "./modules/users/routes";
 
 export function createApp() {
   const app = express();
@@ -41,6 +43,8 @@ export function createApp() {
 
   const api = Router();
   api.use("/auth", authRouter);
+  api.use("/users", requireAuth, usersRouter);
+  api.use("/chats", requireAuth, chatsRouter);
 
   app.use("/api", apiLimiter, csrfGuard, authenticate, api);
 

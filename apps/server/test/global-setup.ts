@@ -16,7 +16,8 @@ export default async function setup(project: TestProject) {
     project.provide("mongoUri", external);
     return;
   }
-  const { MongoMemoryServer } = await import("mongodb-memory-server");
+  // The -core package downloads the MongoDB binary on first use instead of on every npm install.
+  const { MongoMemoryServer } = await import("mongodb-memory-server-core");
   const server = await MongoMemoryServer.create();
   project.provide("mongoUri", server.getUri());
   return () => server.stop();
