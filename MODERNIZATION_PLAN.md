@@ -261,7 +261,11 @@ All events are validated with zod and rate-limited per socket. Membership is re-
 
 **Desktop specifics:** right-click context menu, a hover action bar on messages, drag-and-drop upload, and `Ctrl/Cmd+K` command palette search. `Esc` closes, `Enter` sends, `Shift+Enter` adds a newline, `↑` edits your last message, and `Alt+↑/↓` switches chats.
 
-**Message list:** `@tanstack/react-virtual` with reverse infinite scroll, date separators, grouping of consecutive messages from the same sender, an "unread messages" divider, a jump-to-bottom button with an unread badge, and scroll position preserved when older pages load.
+**Message list:** reverse infinite scroll, date separators, grouping of consecutive messages from the same sender, an "unread messages" divider, a jump-to-bottom button with an unread badge, and scroll position preserved when older pages load.
+
+> **Implemented differently (Phase 3):** instead of `@tanstack/react-virtual`, the list is a bottom-anchored `flex-direction: column-reverse` scroller with `content-visibility: auto` on each row, loading 50 messages per page.
+> - **Why:** the browser keeps the scroll position when older pages are prepended, which is the hardest part to get right with a JS virtualizer on dynamic-height rows. Off-screen rows skip layout and paint, which gives most of virtualization's rendering benefit. Text selection, find-in-page and screen readers stay native. And it's one fewer dependency.
+> - **Trade-off:** the DOM grows as a user scrolls far back. If profiling in Phase 7 shows that matters, older pages can be trimmed from the cache with `maxPages`.
 
 **States everywhere:** skeletons (chat list, messages, profile), designed empty states, inline errors with retry, a route-level error boundary, and a global connection banner (`Offline` · `Reconnecting…` · `Connected`).
 
@@ -313,7 +317,7 @@ Each phase ends in a working, runnable state. Before every major change I'll pos
 | tailwindcss | Removes the global-CSS collision problem; fast responsive work |
 | @radix-ui/* (a few primitives) | Accessible dialogs, menus and popovers |
 | @tanstack/react-query | Pagination, caching, optimistic updates; would otherwise be hand-written |
-| @tanstack/react-virtual | Large conversations |
+| ~~@tanstack/react-virtual~~ | Dropped in Phase 3: native `column-reverse` + `content-visibility` instead (see §5) |
 | zustand | Tiny client-state store |
 | zod | Validation shared between client and server |
 | prisma / @prisma/client | Schema, migrations and typed queries |

@@ -27,7 +27,9 @@ const contentClass = "z-50 min-w-52 animate-pop-in rounded-xl border border-bord
  * and a long-press bottom sheet on touch devices. Keyboard users get the context menu
  * via the Menu key / Shift+F10.
  */
-export function ActionMenu({ actions, title, header, children }: { actions: Action[]; title: string; header?: ReactNode; children: ReactElement }) {
+type SheetHeader = ReactNode | ((close: () => void) => ReactNode);
+
+export function ActionMenu({ actions, title, header, children }: { actions: Action[]; title: string; header?: SheetHeader; children: ReactElement }) {
   const touch = useIsTouch();
   const [sheetOpen, setSheetOpen] = useState(false);
   const longPress = useLongPress(() => setSheetOpen(true));
@@ -90,7 +92,8 @@ export function ActionSheet({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
-  header?: ReactNode;
+  /** Extra content above the actions (e.g. quick reactions); a function receives `close`. */
+  header?: SheetHeader;
   actions: Action[];
 }) {
   return (
@@ -103,7 +106,7 @@ export function ActionSheet({
           >
             <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-border-strong" aria-hidden />
             <D.Title className="truncate px-3 pb-2 text-sm font-semibold text-muted">{title}</D.Title>
-            {header}
+            {typeof header === "function" ? header(() => onOpenChange(false)) : header}
             <ul className="flex flex-col">
               {actions.map((a) => (
                 <li key={a.id}>

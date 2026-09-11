@@ -1,14 +1,20 @@
+import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, MessageSquareOff } from "lucide-react";
 import { Link, useParams } from "react-router";
-import { toast } from "sonner";
-import type { ChatSummary } from "@chat/shared";
-import { Avatar } from "@/components/ui/Avatar";
+import { EDIT_WINDOW_MS, type ChatSummary, type Message } from "@chat/shared";
 import { SidePanel } from "@/components/ui/Dialog";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/States";
+import { useCurrentUser } from "@/features/auth/api";
 import { useChat } from "@/features/chats/api";
+import { flattenMessages, useDeleteMessage, useEditMessage, useSendMessage } from "@/features/messages/api";
+import { messageKeys, type MessagePages } from "@/features/messages/cache";
+import { DeleteMessageDialog } from "@/features/messages/DeleteMessageDialog";
+import { MessageList } from "@/features/messages/MessageList";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ApiError } from "@/lib/api";
+import { useTypingUsers } from "@/stores/typing";
 import { useUi } from "@/stores/ui";
 import { ChatDetails } from "./ChatDetails";
 import { Composer } from "./Composer";
@@ -46,18 +52,70 @@ export default function ConversationPage() {
 }
 
 function Conversation({ chat }: { chat: ChatSummary }) {
+  const me = useCurrentUser();
+  const qc = useQueryClient();
   const detailsOpen = useUi((s) => s.detailsOpen);
   const setDetailsOpen = useUi((s) => s.setDetailsOpen);
   const wide = useMediaQuery("(min-width: 1280px)");
 
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [editing, setEditing] = useState<Message | null>(null);
+  const [deleting, setDeleting] = useState<Message | null>(null);
+  const send = useSendMessage(chat.id);
+  const edit = useEditMessage();
+  const del = useDeleteMessage();
+
+  // Incoming messages in the chat on screen don't bump the unread badge.
+  useEffect(() => {
+    useUi.getState().setActiveChatId(chat.id);
+    return () => useUi.getState().setActiveChatId(null);
+  }, [chat.id]);
+
+  const typingUsers = useTypingUsers(chat.id);
+  const typingText = typingUsers.length ? (chat.type === "direct" ? "typing…" : `${typingUsers.length} typing…`) : undefined;
+
+  const nameOf = useCallback(
+    (userId: string) => (userId === me.id ? "You" : chat.peer?.id === userId ? chat.peer.displayName : "Member"),
+    [me.id, chat.peer],
+  );
+
+  const onReply = useCallback((m: Message) => {
+    setEditing(null);
+    setReplyTo(m);
+  }, []);
+  const onEdit = useCallback((m: Message) => {
+    setReplyTo(null);
+    setEditing(m);
+  }, []);
+
+  const editLast = () => {
+    const all = flattenMessages(qc.getQueryData<MessagePages>(messageKeys.list(chat.id)));
+    const last = [...all].reverse().find((m) => m.senderId === me.id && !m.deletedAt && Date.now() - Date.parse(m.createdAt) < EDIT_WINDOW_MS);
+    if (last) onEdit(last);
+  };
+
   return (
     <div className="flex min-h-0 flex-1 max-md:animate-slide-in-right">
       <section aria-label={`Conversation with ${chat.name}`} className="flex min-w-0 flex-1 flex-col bg-chat">
-        <ConversationHeader chat={chat} />
-        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
-          <ConversationIntro chat={chat} />
-        </div>
-        <Composer chatId={chat.id} onSend={() => toast.info("Sending messages is enabled in the next phase.")} />
+        <ConversationHeader chat={chat} subtitle={typingText} />
+        <MessageList chat={chat} meId={me.id} nameOf={nameOf} onReply={onReply} onEdit={onEdit} onDelete={setDeleting} />
+        <Composer
+          chatId={chat.id}
+          nameOf={nameOf}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
+          editing={editing}
+          onCancelEdit={() => setEditing(null)}
+          onSubmitEdit={(body) => {
+            if (editing) edit.mutate({ message: editing, body });
+            setEditing(null);
+          }}
+          onEditLast={editLast}
+          onSend={(text) => {
+            send(text, replyTo);
+            setReplyTo(null);
+          }}
+        />
       </section>
 
       {wide ? (
@@ -71,19 +129,13 @@ function Conversation({ chat }: { chat: ChatSummary }) {
           <ChatDetails chat={chat} />
         </SidePanel>
       )}
-    </div>
-  );
-}
 
-function ConversationIntro({ chat }: { chat: ChatSummary }) {
-  return (
-    <div className="flex h-full items-end justify-center px-4 py-8">
-      <div className="flex max-w-xs flex-col items-center rounded-3xl bg-surface/80 px-6 py-6 text-center shadow-bubble backdrop-blur">
-        <Avatar name={chat.name} src={chat.avatarUrl} seed={chat.peer?.id ?? chat.id} size="xl" />
-        <p className="mt-3 font-semibold">{chat.name}</p>
-        {chat.peer && <p className="text-sm text-muted">@{chat.peer.username}</p>}
-        <p className="mt-3 text-sm text-muted">No messages here yet. Say hello 👋</p>
-      </div>
+      <DeleteMessageDialog
+        message={deleting}
+        mine={deleting?.senderId === me.id}
+        onClose={() => setDeleting(null)}
+        onDelete={(scope) => deleting && del.mutate({ message: deleting, scope })}
+      />
     </div>
   );
 }

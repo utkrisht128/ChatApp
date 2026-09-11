@@ -13,7 +13,6 @@
   "dependencies": {
     "@chat/shared": "*",
     "@tanstack/react-query": "^5.102.8",
-    "@tanstack/react-virtual": "^3.14.11",
     "emoji-picker-react": "^4.20.7",
     "lucide-react": "^1.45.0",
     "radix-ui": "^1.6.7",

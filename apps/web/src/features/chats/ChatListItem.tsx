@@ -6,6 +6,7 @@ import { ActionMenu, type Action } from "@/components/ui/ActionMenu";
 import { Avatar } from "@/components/ui/Avatar";
 import { cn } from "@/lib/cn";
 import { formatChatTime } from "@/lib/format";
+import { useTypingUsers } from "@/stores/typing";
 import { FOREVER, useUpdateMembership } from "./api";
 
 function previewOf(chat: ChatSummary, meId: string) {
@@ -19,6 +20,7 @@ export const ChatListItem = memo(function ChatListItem({ chat, active, meId }: {
   const update = useUpdateMembership();
   const muted = Boolean(chat.mutedUntil);
   const unread = chat.unreadCount > 0;
+  const typing = useTypingUsers(chat.id).length > 0;
 
   const actions: Action[] = [
     {
@@ -62,7 +64,11 @@ export const ChatListItem = memo(function ChatListItem({ chat, active, meId }: {
             </time>
           </div>
           <div className="mt-0.5 flex items-center justify-between gap-2">
-            <p className={cn("truncate text-sm", unread ? "text-fg" : "text-muted")}>{previewOf(chat, meId)}</p>
+            {typing ? (
+              <p className="truncate text-sm font-medium text-accent">typing…</p>
+            ) : (
+              <p className={cn("truncate text-sm", unread ? "text-fg" : "text-muted")}>{previewOf(chat, meId)}</p>
+            )}
             <span className="flex shrink-0 items-center gap-1.5 text-subtle">
               {muted && (
                 <>

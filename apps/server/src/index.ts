@@ -4,6 +4,7 @@ import { createApp } from "./app";
 import { env, isProd } from "./config/env";
 import { connectDb, syncIndexes } from "./lib/db";
 import { logger } from "./lib/logger";
+import { createRealtime } from "./realtime";
 
 process.on("unhandledRejection", (reason) => logger.error({ err: reason }, "Unhandled promise rejection"));
 process.on("uncaughtException", (err) => {
@@ -20,6 +21,7 @@ async function main() {
   // Render's load balancer keeps connections alive for up to 60s+; outlive it to avoid 502s.
   server.keepAliveTimeout = 65_000;
   server.headersTimeout = 66_000;
+  const io = createRealtime(server);
 
   server.listen(env.PORT, () => logger.info({ port: env.PORT, env: env.NODE_ENV }, "Server started"));
 
@@ -34,12 +36,18 @@ async function main() {
     }, 10_000);
     force.unref();
 
-    server.close(async () => {
+    // Closes sockets (clients reconnect to the new instance) and then the HTTP server.
+    void io.close(async () => {
       await mongoose.disconnect();
       logger.info("Shutdown complete");
       process.exit(0);
     });
     server.closeIdleConnections();
+    // Keep-alive connections (e.g. a proxy's pooled sockets) would otherwise hold the port
+    // open until the forced exit: give in-flight requests a short grace period in
+    // production, none in development where the watcher restarts immediately.
+    if (isProd) setTimeout(() => server.closeAllConnections(), 5_000).unref();
+    else server.closeAllConnections();
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));

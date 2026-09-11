@@ -10,6 +10,7 @@ import { errorHandler, notFoundHandler } from "./middleware/error";
 import { apiLimiter, csrfGuard } from "./middleware/security";
 import { authRouter } from "./modules/auth/routes";
 import { chatsRouter } from "./modules/chats/routes";
+import { chatMessagesRouter, messagesRouter } from "./modules/messages/routes";
 import { usersRouter } from "./modules/users/routes";
 
 export function createApp() {
@@ -45,6 +46,8 @@ export function createApp() {
   api.use("/auth", authRouter);
   api.use("/users", requireAuth, usersRouter);
   api.use("/chats", requireAuth, chatsRouter);
+  api.use("/chats/:chatId", requireAuth, chatMessagesRouter);
+  api.use("/messages", requireAuth, messagesRouter);
 
   app.use("/api", apiLimiter, csrfGuard, authenticate, api);
 

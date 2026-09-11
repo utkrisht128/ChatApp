@@ -9,6 +9,7 @@ import { hashToken, randomToken } from "../../lib/tokens";
 import { AuthToken, type AuthTokenType } from "../../models/AuthToken";
 import { Session } from "../../models/Session";
 import { User, type UserDoc } from "../../models/User";
+import { disconnectUser } from "../../realtime/bus";
 
 const DAY = 86_400_000;
 const SESSION_TTL = env.SESSION_TTL_DAYS * DAY;
@@ -62,8 +63,12 @@ export async function resolveSession(token: string) {
 
 export const revokeSession = (sessionId: string) => Session.deleteOne({ _id: sessionId });
 
-export const revokeAllSessions = (userId: UserDoc["_id"], exceptSessionId?: string) =>
-  Session.deleteMany({ userId, ...(exceptSessionId ? { _id: { $ne: exceptSessionId } } : {}) });
+export async function revokeAllSessions(userId: UserDoc["_id"], exceptSessionId?: string) {
+  await Session.deleteMany({ userId, ...(exceptSessionId ? { _id: { $ne: exceptSessionId } } : {}) });
+  // Live sockets aren't tied to a session; drop them all. Tabs whose session is still
+  // valid reconnect with a fresh ticket, the others are signed out.
+  disconnectUser(userId);
+}
 
 async function issueToken(userId: UserDoc["_id"], type: AuthTokenType) {
   const token = randomToken();

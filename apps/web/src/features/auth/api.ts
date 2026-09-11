@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import type { LoginInput, Me, RegisterInput } from "@chat/shared";
 import { api, ApiError } from "@/lib/api";
 import { useDrafts } from "@/stores/drafts";
+import { useOutbox } from "@/stores/outbox";
 
 type UserResponse = { user: Me };
 
@@ -59,6 +60,7 @@ function useSignedOut() {
   return () => {
     navigate("/login", { replace: true });
     useDrafts.getState().clearAll();
+    useOutbox.getState().clearAll();
     qc.clear();
     qc.setQueryData(meKey, null);
   };

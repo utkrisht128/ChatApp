@@ -1,0 +1,211 @@
+import { memo, useRef, useState, type PointerEvent } from "react";
+import { Ban, Check, CheckCheck, CircleAlert, Clock3, Copy, CornerUpLeft, MoreHorizontal, Pencil, RotateCw, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { EDIT_WINDOW_MS, type Message } from "@chat/shared";
+import { ActionDropdown, ActionMenu, type Action } from "@/components/ui/ActionMenu";
+import { IconButton } from "@/components/ui/Button";
+import { useIsTouch } from "@/hooks/useMediaQuery";
+import { cn } from "@/lib/cn";
+import { formatClock } from "@/lib/format";
+import type { PendingMessage } from "@/stores/outbox";
+import { Linkify } from "./Linkify";
+import { QuickReactions, ReactionChips, ReactionPopover } from "./Reactions";
+import type { DeliveryStatus } from "./status";
+
+const STATUS: Record<DeliveryStatus, { icon: typeof Check; label: string }> = {
+  sending: { icon: Clock3, label: "Sending" },
+  failed: { icon: CircleAlert, label: "Not sent" },
+  sent: { icon: Check, label: "Sent" },
+  delivered: { icon: CheckCheck, label: "Delivered" },
+  read: { icon: CheckCheck, label: "Read" },
+};
+
+function StatusIcon({ status }: { status: DeliveryStatus }) {
+  const { icon: Icon, label } = STATUS[status];
+  return (
+    <span className={cn("inline-flex", status === "read" && "text-read")}>
+      <Icon className="size-3.5" aria-hidden />
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
+/** Touch: drag a message to the right to reply. */
+function useSwipeToReply(onReply: () => void, enabled: boolean) {
+  const [dx, setDx] = useState(0);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const axis = useRef<"h" | "v" | null>(null);
+  const reset = () => {
+    if (dx > 56) {
+      navigator.vibrate?.(10);
+      onReply();
+    }
+    setDx(0);
+    start.current = null;
+  };
+  return {
+    style: dx ? { transform: `translateX(${dx}px)`, transition: "none" } : { transition: "transform 180ms ease-out" },
+    handlers: enabled
+      ? {
+          onPointerDown: (e: PointerEvent) => {
+            if (e.pointerType !== "touch") return;
+            start.current = { x: e.clientX, y: e.clientY };
+            axis.current = null;
+          },
+          onPointerMove: (e: PointerEvent) => {
+            const s = start.current;
+            if (!s) return;
+            const mx = e.clientX - s.x;
+            const my = e.clientY - s.y;
+            if (!axis.current && (Math.abs(mx) > 8 || Math.abs(my) > 8)) axis.current = Math.abs(mx) > Math.abs(my) ? "h" : "v";
+            if (axis.current === "h") setDx(Math.max(0, Math.min(72, mx)));
+          },
+          onPointerUp: reset,
+          onPointerCancel: reset,
+        }
+      : {},
+  };
+}
+
+export type BubbleProps = {
+  message: Message;
+  pending?: PendingMessage;
+  mine: boolean;
+  first: boolean;
+  last: boolean;
+  status?: DeliveryStatus;
+  meId: string;
+  focusable: boolean;
+  highlighted: boolean;
+  nameOf: (userId: string) => string;
+  onReply: (m: Message) => void;
+  onEdit: (m: Message) => void;
+  onDelete: (m: Message) => void;
+  onReact: (m: Message, emoji: string | null) => void;
+  onJumpTo: (messageId: string) => void;
+  onRetry: (p: PendingMessage) => void;
+  onDiscard: (p: PendingMessage) => void;
+};
+
+export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
+  const { message: m, pending, mine, first, last, status, meId, nameOf, highlighted } = props;
+  const touch = useIsTouch();
+  const deleted = Boolean(m.deletedAt);
+  const interactive = !pending && !deleted;
+  const myReaction = m.reactions.find((r) => r.userIds.includes(meId))?.emoji ?? null;
+  const editable = mine && interactive && m.type === "text" && Date.now() - Date.parse(m.createdAt) < EDIT_WINDOW_MS;
+  const swipe = useSwipeToReply(() => props.onReply(m), touch && interactive);
+
+  const actions: Action[] = [
+    { id: "reply", label: "Reply", icon: CornerUpLeft, onSelect: () => props.onReply(m), hidden: !interactive },
+    {
+      id: "copy",
+      label: "Copy text",
+      icon: Copy,
+      hidden: deleted || !m.body,
+      onSelect: () => navigator.clipboard.writeText(m.body).then(() => toast.success("Copied"), () => toast.error("Couldn't copy")),
+    },
+    { id: "edit", label: "Edit", icon: Pencil, onSelect: () => props.onEdit(m), hidden: !editable },
+    { id: "retry", label: "Retry sending", icon: RotateCw, onSelect: () => pending && props.onRetry(pending), hidden: pending?.status !== "failed" },
+    { id: "discard", label: "Discard", icon: Trash2, danger: true, onSelect: () => pending && props.onDiscard(pending), hidden: !pending || pending.status !== "failed" },
+    { id: "delete", label: "Delete", icon: Trash2, danger: true, onSelect: () => props.onDelete(m), hidden: Boolean(pending) },
+  ];
+
+  const who = mine ? "You" : nameOf(m.senderId);
+  const time = formatClock(new Date(m.createdAt));
+
+  return (
+    <div className={cn("flex flex-col px-3 md:px-6", mine ? "items-end" : "items-start", first ? "mt-2.5" : "mt-0.5")}>
+      <div className="group/msg relative flex max-w-[min(85%,38rem)] items-center gap-1 md:max-w-[min(75%,38rem)]">
+        <ActionMenu
+          actions={actions}
+          title={deleted ? "Message" : `Message from ${who}`}
+          header={interactive ? (close) => <div className="px-2 pb-2"><QuickReactions current={myReaction} onPick={(e) => (close(), props.onReact(m, e))} /></div> : undefined}
+        >
+          <div
+            id={`msg-${m.id}`}
+            data-msg-row
+            tabIndex={props.focusable ? 0 : -1}
+            {...swipe.handlers}
+            style={swipe.style}
+            className={cn(
+              "relative min-w-0 touch-pan-y rounded-2xl px-3 pt-1.5 pb-1 shadow-bubble outline-offset-2 transition-[background-color,box-shadow] select-text [-webkit-touch-callout:none]",
+              mine ? "bg-bubble-out text-bubble-out-fg" : "bg-bubble-in text-bubble-in-fg",
+              mine ? cn(!first && "rounded-tr-md", !last && "rounded-br-md") : cn(!first && "rounded-tl-md", !last && "rounded-bl-md"),
+              pending?.status === "failed" && "opacity-80",
+              highlighted && "ring-2 ring-primary ring-offset-2 ring-offset-chat",
+            )}
+          >
+            <span className="sr-only">
+              {who}, {time}:{" "}
+            </span>
+            {m.replyTo && (
+              <button
+                onClick={() => props.onJumpTo(m.replyTo!.id)}
+                className={cn(
+                  "mt-0.5 mb-1 flex w-full min-w-40 flex-col rounded-lg border-l-[3px] px-2.5 py-1 text-left text-sm",
+                  mine ? "border-white/70 bg-white/15" : "border-primary bg-primary-soft",
+                )}
+              >
+                <span className={cn("text-xs font-semibold", mine ? "text-white" : "text-accent")}>{nameOf(m.replyTo.senderId)}</span>
+                <span className="line-clamp-2 opacity-90">{m.replyTo.preview}</span>
+                <span className="sr-only">— jump to original message</span>
+              </button>
+            )}
+            <div className="flex flex-wrap items-end justify-end gap-x-2">
+              {deleted ? (
+                <p className="flex min-w-0 flex-auto items-center gap-1.5 py-0.5 text-[15px] italic opacity-75">
+                  <Ban className="size-4 shrink-0" /> {mine ? "You deleted this message" : "This message was deleted"}
+                </p>
+              ) : (
+                <p className="min-w-0 flex-auto py-0.5 text-[15px] leading-snug break-words whitespace-pre-wrap [overflow-wrap:anywhere]">
+                  <Linkify text={m.body} linkClassName={cn("underline underline-offset-2", mine ? "text-white" : "text-accent")} />
+                </p>
+              )}
+              <span className={cn("ml-auto flex shrink-0 translate-y-0.5 items-center gap-1 text-[11px] leading-5", mine ? "text-bubble-out-muted" : "text-bubble-in-muted")}>
+                {m.editedAt && !deleted && <span>edited</span>}
+                <time dateTime={m.createdAt}>{time}</time>
+                {mine && status && <StatusIcon status={status} />}
+              </span>
+            </div>
+          </div>
+        </ActionMenu>
+
+        {/* Desktop hover/focus toolbar */}
+        {!touch && interactive && (
+          <div
+            className={cn(
+              "absolute top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/msg:opacity-100 group-hover/msg:opacity-100 has-[[data-state=open]]:opacity-100",
+              mine ? "right-full mr-1 flex-row-reverse" : "left-full ml-1",
+            )}
+          >
+            <ReactionPopover current={myReaction} onPick={(e) => props.onReact(m, e)} />
+            <IconButton label="Reply" size="sm" className="[&_svg]:size-4" onClick={() => props.onReply(m)}>
+              <CornerUpLeft />
+            </IconButton>
+            <ActionDropdown actions={actions.filter((a) => a.id !== "reply")} align={mine ? "end" : "start"}>
+              <IconButton label="More actions" size="sm" className="[&_svg]:size-4">
+                <MoreHorizontal />
+              </IconButton>
+            </ActionDropdown>
+          </div>
+        )}
+      </div>
+
+      <ReactionChips reactions={m.reactions} meId={meId} nameOf={nameOf} align={mine ? "end" : "start"} onToggle={(e) => props.onReact(m, e)} />
+
+      {pending?.status === "failed" && (
+        <div role="alert" className="mt-1 flex items-center gap-2 text-xs text-danger">
+          <CircleAlert className="size-3.5" />
+          <span>{pending.error ?? "Not sent."}</span>
+          <button className="font-semibold underline" onClick={() => props.onRetry(pending)}>
+            Retry
+          </button>
+          <button className="font-semibold underline" onClick={() => props.onDiscard(pending)}>
+            Discard
+          </button>
+        </div>
+      )}
+    </div>
+  );
+});

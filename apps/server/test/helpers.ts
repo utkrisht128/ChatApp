@@ -11,6 +11,7 @@ export function client() {
     get: (path: string) => agent.get(path),
     post: (path: string, body?: object) => agent.post(path).set("X-Requested-With", "chatapp").send(body),
     patch: (path: string, body?: object) => agent.patch(path).set("X-Requested-With", "chatapp").send(body),
+    put: (path: string, body?: object) => agent.put(path).set("X-Requested-With", "chatapp").send(body),
     del: (path: string) => agent.delete(path).set("X-Requested-With", "chatapp"),
   };
 }

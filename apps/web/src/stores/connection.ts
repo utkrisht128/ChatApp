@@ -4,6 +4,6 @@ export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "di
 
 /** Real-time connection state, driven by the socket client. */
 export const useConnection = create<{ status: ConnectionStatus; setStatus: (s: ConnectionStatus) => void }>()((set) => ({
-  status: "connected",
+  status: "connecting",
   setStatus: (status) => set({ status }),
 }));

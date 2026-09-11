@@ -2,5 +2,6 @@
 export * from "./AuthToken";
 export * from "./Conversation";
 export * from "./Member";
+export * from "./Message";
 export * from "./Session";
 export * from "./User";

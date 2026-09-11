@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { SendHorizontal, Smile, X } from "lucide-react";
+import { CornerUpLeft, Pencil, SendHorizontal, Smile, X } from "lucide-react";
+import { MAX_MESSAGE_LENGTH, type Message } from "@chat/shared";
 import { IconButton } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { useMe } from "@/features/auth/api";
 import { useIsTouch, useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/cn";
+import { getSocket } from "@/lib/socket";
 import { useDrafts } from "@/stores/drafts";
 import { useResolvedTheme } from "@/stores/theme";
 
@@ -55,14 +57,75 @@ function EmojiPanel({ onPick, onClose }: { onPick: (emoji: string) => void; onCl
   );
 }
 
-export function Composer({ chatId, onSend, disabled }: { chatId: string; onSend: (text: string) => void; disabled?: boolean }) {
+/** Emits "typing" at most every 3s while typing, and "stopped" after 4s idle or on send. */
+function useTypingSignal(chatId: string) {
+  const lastSent = useRef(0);
+  const idle = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const stop = () => {
+    clearTimeout(idle.current);
+    if (lastSent.current) getSocket()?.emit("typing", { chatId, isTyping: false });
+    lastSent.current = 0;
+  };
+  useEffect(() => stop, [chatId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return {
+    ping() {
+      const now = Date.now();
+      if (now - lastSent.current > 3000) {
+        getSocket()?.emit("typing", { chatId, isTyping: true });
+        lastSent.current = now;
+      }
+      clearTimeout(idle.current);
+      idle.current = setTimeout(stop, 4000);
+    },
+    stop,
+  };
+}
+
+type ComposerProps = {
+  chatId: string;
+  onSend: (text: string) => void;
+  replyTo: Message | null;
+  onCancelReply: () => void;
+  editing: Message | null;
+  onCancelEdit: () => void;
+  onSubmitEdit: (text: string) => void;
+  /** ↑ in an empty composer edits your last message. */
+  onEditLast: () => void;
+  nameOf: (userId: string) => string;
+  disabled?: boolean;
+};
+
+export function Composer({ chatId, onSend, replyTo, onCancelReply, editing, onCancelEdit, onSubmitEdit, onEditLast, nameOf, disabled }: ComposerProps) {
   const draft = useDrafts((s) => s.drafts[chatId] ?? "");
   const setDraft = useDrafts((s) => s.setDraft);
   const enterToSend = useMe().data?.settings.enterToSend ?? true;
   const touch = useIsTouch();
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [editText, setEditText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
   const id = useId();
+  const typing = useTypingSignal(chatId);
+
+  const value = editing ? editText : draft;
+  const setValue = (text: string) => (editing ? setEditText(text) : setDraft(chatId, text));
+
+  // Entering edit mode loads the message; the draft is left untouched and comes back afterwards.
+  useEffect(() => {
+    if (!editing) return;
+    setEditText(editing.body);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, [editing]);
+
+  useEffect(() => {
+    if (replyTo) ref.current?.focus();
+  }, [replyTo]);
 
   // Grow with content up to ~6 lines, then scroll.
   useLayoutEffect(() => {
@@ -70,36 +133,49 @@ export function Composer({ chatId, onSend, disabled }: { chatId: string; onSend:
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [draft]);
+  }, [value]);
 
-  // Desktop: typing anywhere in the conversation goes to the composer.
   useEffect(() => {
     if (!touch) ref.current?.focus();
   }, [chatId, touch]);
 
-  const canSend = draft.trim().length > 0 && !disabled;
+  const canSubmit = value.trim().length > 0 && !disabled;
 
-  const send = () => {
-    const text = draft.trim();
+  const submit = () => {
+    const text = value.trim();
     if (!text || disabled) return;
-    onSend(text);
-    setDraft(chatId, "");
+    if (editing) {
+      if (text !== editing.body) onSubmitEdit(text);
+      else onCancelEdit();
+    } else {
+      onSend(text);
+      setDraft(chatId, "");
+      typing.stop();
+    }
     ref.current?.focus();
   };
 
-  // Enter sends on devices with a keyboard; on touch devices Enter is a newline (use the send button).
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Escape") {
+      if (editing) return onCancelEdit();
+      if (replyTo) return onCancelReply();
+    }
+    if (e.key === "ArrowUp" && !value && !editing && !touch) {
+      e.preventDefault();
+      return onEditLast();
+    }
+    // Enter sends with a keyboard; on touch devices Enter is a newline (use the send button).
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && enterToSend && !touch) {
       e.preventDefault();
-      send();
+      submit();
     }
   };
 
   const insertEmoji = (emoji: string) => {
     const el = ref.current;
-    const start = el?.selectionStart ?? draft.length;
-    const end = el?.selectionEnd ?? draft.length;
-    setDraft(chatId, draft.slice(0, start) + emoji + draft.slice(end));
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? value.length;
+    setValue(value.slice(0, start) + emoji + value.slice(end));
     requestAnimationFrame(() => {
       if (!el) return;
       const pos = start + emoji.length;
@@ -108,9 +184,27 @@ export function Composer({ chatId, onSend, disabled }: { chatId: string; onSend:
     });
   };
 
+  const context = editing
+    ? { icon: Pencil, title: "Edit message", text: editing.body, cancel: onCancelEdit, cancelLabel: "Cancel editing" }
+    : replyTo
+      ? { icon: CornerUpLeft, title: `Replying to ${nameOf(replyTo.senderId)}`, text: replyTo.body, cancel: onCancelReply, cancelLabel: "Cancel reply" }
+      : null;
+
   return (
     <div className="relative shrink-0 border-t border-border bg-surface px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-4">
       {emojiOpen && <EmojiPanel onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />}
+      {context && (
+        <div className="mb-2 flex animate-fade-in items-center gap-3 rounded-xl bg-surface-2 py-1.5 pr-1 pl-3">
+          <context.icon className="size-4 shrink-0 text-accent" />
+          <div className="min-w-0 flex-1 border-l-2 border-primary pl-2.5">
+            <p className="text-xs font-semibold text-accent">{context.title}</p>
+            <p className="truncate text-sm text-muted">{context.text}</p>
+          </div>
+          <IconButton label={context.cancelLabel} size="sm" onClick={context.cancel}>
+            <X />
+          </IconButton>
+        </div>
+      )}
       <div className="flex items-end gap-1.5">
         <IconButton
           data-emoji-toggle
@@ -123,31 +217,35 @@ export function Composer({ chatId, onSend, disabled }: { chatId: string; onSend:
         </IconButton>
         <div className="flex min-h-11 flex-1 items-center rounded-3xl bg-surface-2 px-4 py-2.5 focus-within:ring-1 focus-within:ring-primary/30">
           <label htmlFor={id} className="sr-only">
-            Message
+            {editing ? "Edit message" : "Message"}
           </label>
           <textarea
             id={id}
             ref={ref}
             rows={1}
-            value={draft}
-            onChange={(e) => setDraft(chatId, e.target.value)}
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              if (!editing && e.target.value) typing.ping();
+            }}
             onKeyDown={onKeyDown}
+            onBlur={typing.stop}
             onFocus={() => touch && setEmojiOpen(false)}
             placeholder="Message"
             enterKeyHint={enterToSend && !touch ? "send" : "enter"}
-            maxLength={4000}
+            maxLength={MAX_MESSAGE_LENGTH}
             className="scrollbar-thin max-h-40 w-full resize-none bg-transparent text-base leading-6 outline-none placeholder:text-subtle focus-visible:outline-none md:text-[15px]"
           />
         </div>
         <IconButton
           variant="primary"
           size="lg"
-          label="Send message"
-          disabled={!canSend}
-          onClick={send}
+          label={editing ? "Save edit" : "Send message"}
+          disabled={!canSubmit}
+          onClick={submit}
           // Keep focus in the textarea on mobile so the keyboard stays open after sending.
           onPointerDown={(e) => e.preventDefault()}
-          className={cn("transition-transform", canSend ? "scale-100" : "scale-95")}
+          className={cn("transition-transform", canSubmit ? "scale-100" : "scale-95")}
         >
           <SendHorizontal />
         </IconButton>

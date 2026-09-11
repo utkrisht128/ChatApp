@@ -302,7 +302,7 @@ export function PrivacySettings() {
       <SettingsGroup title="Online status" footer="Who can see when you're online right now.">
         <RadioRows label="Online status" value={settings.onlineVisibility} onValueChange={(v) => update.mutate({ onlineVisibility: v })} options={VISIBILITY_OPTIONS} />
       </SettingsGroup>
-      <SettingsGroup footer="If you turn off read receipts, you won't see other people's either. Group chats always show read status to the sender.">
+      <SettingsGroup footer="If you turn off read receipts, you won't see other people's either.">
         <SwitchRow label="Read receipts" description="Let people know when you've read their messages." checked={settings.readReceipts} onCheckedChange={(v) => update.mutate({ readReceipts: v })} />
       </SettingsGroup>
     </SettingsPage>

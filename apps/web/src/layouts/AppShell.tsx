@@ -9,6 +9,7 @@ import { Button, IconButton } from "@/components/ui/Button";
 import { Tip } from "@/components/ui/Tooltip";
 import { useCurrentUser, useResendVerification } from "@/features/auth/api";
 import { useTotalUnread } from "@/features/chats/api";
+import { useRealtime } from "@/features/realtime/useRealtime";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useThemeStore } from "@/stores/theme";
@@ -148,6 +149,7 @@ export function AppShell() {
   const inChat = useMatch("/c/:chatId");
   const inSettingsSection = useMatch("/settings/:section");
   const unread = useTotalUnread();
+  useRealtime(me.id);
 
   // The server copy of the theme wins when it changes (e.g. set on another device).
   const setPreference = useThemeStore((s) => s.setPreference);
