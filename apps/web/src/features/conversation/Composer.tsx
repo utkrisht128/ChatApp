@@ -95,9 +95,22 @@ type ComposerProps = {
   onEditLast: () => void;
   nameOf: (userId: string) => string;
   disabled?: boolean;
+  /** When set, the composer is replaced by this explanation (e.g. admins-only group). */
+  disabledReason?: string;
 };
 
-export function Composer({ chatId, onSend, replyTo, onCancelReply, editing, onCancelEdit, onSubmitEdit, onEditLast, nameOf, disabled }: ComposerProps) {
+export function Composer(props: ComposerProps) {
+  if (props.disabledReason) {
+    return (
+      <div className="shrink-0 border-t border-border bg-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-center text-sm text-muted" role="status">
+        {props.disabledReason}
+      </div>
+    );
+  }
+  return <ActiveComposer {...props} />;
+}
+
+function ActiveComposer({ chatId, onSend, replyTo, onCancelReply, editing, onCancelEdit, onSubmitEdit, onEditLast, nameOf, disabled }: ComposerProps) {
   const draft = useDrafts((s) => s.drafts[chatId] ?? "");
   const setDraft = useDrafts((s) => s.setDraft);
   const enterToSend = useMe().data?.settings.enterToSend ?? true;

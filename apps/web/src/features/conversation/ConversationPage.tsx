@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, MessageSquareOff } from "lucide-react";
 import { Link, useParams } from "react-router";
@@ -11,7 +11,8 @@ import { useChat } from "@/features/chats/api";
 import { flattenMessages, useDeleteMessage, useEditMessage, useSendMessage } from "@/features/messages/api";
 import { messageKeys, type MessagePages } from "@/features/messages/cache";
 import { DeleteMessageDialog } from "@/features/messages/DeleteMessageDialog";
-import { MessageList } from "@/features/messages/MessageList";
+import { useGroup } from "@/features/groups/api";
+import { MessageList, type Person } from "@/features/messages/MessageList";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ApiError } from "@/lib/api";
 import { useTypingUsers } from "@/stores/typing";
@@ -71,13 +72,32 @@ function Conversation({ chat }: { chat: ChatSummary }) {
     return () => useUi.getState().setActiveChatId(null);
   }, [chat.id]);
 
-  const typingUsers = useTypingUsers(chat.id);
-  const typingText = typingUsers.length ? (chat.type === "direct" ? "typing…" : `${typingUsers.length} typing…`) : undefined;
+  const isGroup = chat.type === "group";
+  const group = useGroup(chat.id, isGroup);
 
-  const nameOf = useCallback(
-    (userId: string) => (userId === me.id ? "You" : chat.peer?.id === userId ? chat.peer.displayName : "Member"),
-    [me.id, chat.peer],
-  );
+  const people = useMemo(() => {
+    const map = new Map<string, Person>();
+    for (const m of group.data?.members ?? []) map.set(m.user.id, { name: m.user.displayName, avatarUrl: m.user.avatarUrl });
+    if (chat.peer) map.set(chat.peer.id, { name: chat.peer.displayName, avatarUrl: chat.peer.avatarUrl });
+    map.set(me.id, { name: "You", avatarUrl: me.avatarUrl });
+    return map;
+  }, [group.data, chat.peer, me.id, me.avatarUrl]);
+  const personOf = useCallback((id: string): Person => people.get(id) ?? { name: isGroup ? "Former member" : "Deleted account", avatarUrl: null }, [people, isGroup]);
+  const nameOf = useCallback((id: string) => personOf(id).name, [personOf]);
+
+  const typingUsers = useTypingUsers(chat.id);
+  const typingText = !typingUsers.length
+    ? undefined
+    : !isGroup
+      ? "typing…"
+      : typingUsers.length === 1
+        ? `${nameOf(typingUsers[0]!)} is typing…`
+        : typingUsers.length === 2
+          ? `${nameOf(typingUsers[0]!)} and ${nameOf(typingUsers[1]!)} are typing…`
+          : `${typingUsers.length} people are typing…`;
+
+  // Mirrors the server rule; the server still enforces it.
+  const canSend = !isGroup || !group.data || group.data.permissions.send === "all" || chat.role !== "member";
 
   const onReply = useCallback((m: Message) => {
     setEditing(null);
@@ -98,9 +118,10 @@ function Conversation({ chat }: { chat: ChatSummary }) {
     <div className="flex min-h-0 flex-1 max-md:animate-slide-in-right">
       <section aria-label={`Conversation with ${chat.name}`} className="flex min-w-0 flex-1 flex-col bg-chat">
         <ConversationHeader chat={chat} subtitle={typingText} />
-        <MessageList chat={chat} meId={me.id} nameOf={nameOf} onReply={onReply} onEdit={onEdit} onDelete={setDeleting} />
+        <MessageList chat={chat} meId={me.id} nameOf={nameOf} personOf={personOf} onReply={onReply} onEdit={onEdit} onDelete={setDeleting} />
         <Composer
           chatId={chat.id}
+          disabledReason={canSend ? undefined : "Only admins can send messages in this group."}
           nameOf={nameOf}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}

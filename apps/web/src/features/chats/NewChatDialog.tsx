@@ -15,7 +15,7 @@ import { errorMessage } from "@/lib/api";
 import { useUi } from "@/stores/ui";
 import { useOpenDirectChat } from "./api";
 
-export function NewChatDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function NewChatDialog({ open, onOpenChange, onNewGroup }: { open: boolean; onOpenChange: (open: boolean) => void; onNewGroup: () => void }) {
   const [query, setQuery] = useState("");
   const q = useDebouncedValue(query.trim(), 250);
   const search = useUserSearch(q);
@@ -56,6 +56,14 @@ export function NewChatDialog({ open, onOpenChange }: { open: boolean; onOpenCha
           />
         </div>
 
+        {!q && (
+          <button onClick={onNewGroup} className="mx-0 flex items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-surface-2">
+            <span className="grid size-10 place-items-center rounded-full bg-primary text-primary-fg">
+              <UsersRound className="size-5" />
+            </span>
+            <span className="font-medium">New group</span>
+          </button>
+        )}
         <div className="min-h-64 flex-1" aria-live="polite">
           {!q ? (
             <EmptyState icon={UserRoundSearch} title="Who do you want to talk to?" description="Search by their name or @username." />

@@ -5,6 +5,7 @@ import type { PendingMessage } from "@/stores/outbox";
 export type Row =
   | { kind: "day"; key: string; label: string }
   | { kind: "unread"; key: string; count: number }
+  | { kind: "system"; key: string; message: Message }
   | { kind: "message"; key: string; message: Message; pending?: PendingMessage; mine: boolean; first: boolean; last: boolean };
 
 const GROUP_WINDOW_MS = 5 * 60_000;
@@ -21,6 +22,7 @@ export function pendingToMessage(p: PendingMessage, meId: string): Message {
     reactions: [],
     mentions: [],
     forwarded: false,
+    system: null,
     createdAt: p.createdAt,
     editedAt: null,
     deletedAt: null,
@@ -31,9 +33,17 @@ const sameDay = (a: string, b: string) => new Date(a).toDateString() === new Dat
 
 /** Consecutive messages from one sender, same day, within 5 minutes, render as one visual group. */
 const groupable = (a: Message | undefined, b: Message | undefined) =>
-  Boolean(a && b && a.senderId === b.senderId && sameDay(a.createdAt, b.createdAt) && Math.abs(Date.parse(b.createdAt) - Date.parse(a.createdAt)) < GROUP_WINDOW_MS);
+  Boolean(
+    a &&
+      b &&
+      a.type !== "system" &&
+      b.type !== "system" &&
+      a.senderId === b.senderId &&
+      sameDay(a.createdAt, b.createdAt) &&
+      Math.abs(Date.parse(b.createdAt) - Date.parse(a.createdAt)) < GROUP_WINDOW_MS,
+  );
 
-/** Flattens messages (+ optimistic ones) into rows with day separators and the unread divider. */
+/** Flattens messages (+ optimistic ones) into rows with day separators, group events and the unread divider. */
 export function buildRows(messages: Message[], pending: PendingMessage[], meId: string, firstUnread: { id: string; count: number } | null): Row[] {
   const confirmed = new Set(messages.map((m) => m.clientId));
   const all = [
@@ -50,16 +60,21 @@ export function buildRows(messages: Message[], pending: PendingMessage[], meId: 
     }
     if (firstUnread && message.id === firstUnread.id) rows.push({ kind: "unread", key: "unread", count: firstUnread.count });
 
+    // Keyed by sender+clientId so the optimistic bubble and the confirmed one are the same element.
+    const key = `${message.senderId}:${message.clientId}`;
+    if (message.type === "system") {
+      rows.push({ kind: "system", key, message });
+      return;
+    }
     const breaksBefore = rows.at(-1)?.kind !== "message";
     rows.push({
       kind: "message",
-      // Keyed by sender+clientId so the optimistic bubble and the confirmed one are the same element.
-      key: `${message.senderId}:${message.clientId}`,
+      key,
       message,
       pending: p,
       mine: message.senderId === meId,
       first: breaksBefore || !groupable(prev, message),
-      last: !groupable(message, next) || (firstUnread?.id === next?.id) || (next ? !sameDay(message.createdAt, next.createdAt) : true),
+      last: !groupable(message, next) || firstUnread?.id === next?.id || (next ? !sameDay(message.createdAt, next.createdAt) : true),
     });
   });
   return rows;

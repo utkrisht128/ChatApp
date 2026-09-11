@@ -3,8 +3,10 @@ import { Ban, Check, CheckCheck, CircleAlert, Clock3, Copy, CornerUpLeft, MoreHo
 import { toast } from "sonner";
 import { EDIT_WINDOW_MS, type Message } from "@chat/shared";
 import { ActionDropdown, ActionMenu, type Action } from "@/components/ui/ActionMenu";
+import { Avatar, nameColor } from "@/components/ui/Avatar";
 import { IconButton } from "@/components/ui/Button";
 import { useIsTouch } from "@/hooks/useMediaQuery";
+import { useResolvedTheme } from "@/stores/theme";
 import { cn } from "@/lib/cn";
 import { formatClock } from "@/lib/format";
 import type { PendingMessage } from "@/stores/outbox";
@@ -68,6 +70,8 @@ function useSwipeToReply(onReply: () => void, enabled: boolean) {
 }
 
 export type BubbleProps = {
+  /** Group chats: someone else's message shows their name (first in a run) and avatar (last in a run). */
+  sender?: { id: string; name: string; avatarUrl: string | null };
   message: Message;
   pending?: PendingMessage;
   mine: boolean;
@@ -88,8 +92,9 @@ export type BubbleProps = {
 };
 
 export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
-  const { message: m, pending, mine, first, last, status, meId, nameOf, highlighted } = props;
+  const { message: m, pending, mine, first, last, status, meId, nameOf, highlighted, sender } = props;
   const touch = useIsTouch();
+  const theme = useResolvedTheme();
   const deleted = Boolean(m.deletedAt);
   const interactive = !pending && !deleted;
   const myReaction = m.reactions.find((r) => r.userIds.includes(meId))?.emoji ?? null;
@@ -115,8 +120,14 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
   const time = formatClock(new Date(m.createdAt));
 
   return (
-    <div className={cn("flex flex-col px-3 md:px-6", mine ? "items-end" : "items-start", first ? "mt-2.5" : "mt-0.5")}>
+    <div className={cn("flex flex-col px-3 md:px-6", mine ? "items-end" : "items-start", first ? "mt-2.5" : "mt-0.5", sender && "pl-12 md:pl-[4.5rem]")}>
       <div className="group/msg relative flex max-w-[min(85%,38rem)] items-center gap-1 md:max-w-[min(75%,38rem)]">
+        {/* Positioned by a wrapper: Avatar's own root is `relative`, which would override `absolute`. */}
+        {sender && last && (
+          <span className="absolute right-full bottom-0 mr-2 flex">
+            <Avatar name={sender.name} src={sender.avatarUrl} seed={sender.id} size="sm" />
+          </span>
+        )}
         <ActionMenu
           actions={actions}
           title={deleted ? "Message" : `Message from ${who}`}
@@ -139,6 +150,11 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
             <span className="sr-only">
               {who}, {time}:{" "}
             </span>
+            {sender && first && (
+              <p aria-hidden className="mb-0.5 truncate text-[13px] font-semibold" style={{ color: nameColor(sender.id, theme) }}>
+                {sender.name}
+              </p>
+            )}
             {m.replyTo && (
               <button
                 onClick={() => props.onJumpTo(m.replyTo!.id)}

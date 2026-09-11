@@ -1,5 +1,5 @@
 import { Schema, model, type HydratedDocument, type InferSchemaType } from "mongoose";
-import { MAX_MESSAGE_LENGTH, MESSAGE_TYPES } from "@chat/shared";
+import { MAX_MESSAGE_LENGTH, MESSAGE_TYPES, SYSTEM_EVENTS } from "@chat/shared";
 
 const replySchema = new Schema(
   {
@@ -20,6 +20,17 @@ const reactionSchema = new Schema(
   { _id: false },
 );
 
+/** Structured group event, rendered per viewer ("You added Bob"). */
+const systemSchema = new Schema(
+  {
+    event: { type: String, enum: SYSTEM_EVENTS, required: true },
+    actorId: { type: Schema.Types.ObjectId, required: true },
+    targetIds: { type: [Schema.Types.ObjectId], default: [] },
+    value: { type: String, maxlength: 200 },
+  },
+  { _id: false },
+);
+
 const messageSchema = new Schema(
   {
     conversationId: { type: Schema.Types.ObjectId, ref: "Conversation", required: true },
@@ -30,6 +41,7 @@ const messageSchema = new Schema(
     mentions: { type: [Schema.Types.ObjectId], default: [] },
     replyTo: { type: replySchema, default: null },
     forwarded: { type: Boolean, default: false },
+    system: { type: systemSchema, default: null },
     reactions: { type: [reactionSchema], default: [] },
     /** Users who chose "delete for me". */
     hiddenFor: { type: [Schema.Types.ObjectId], default: [] },

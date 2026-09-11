@@ -12,6 +12,7 @@ import { FOREVER, useUpdateMembership } from "./api";
 function previewOf(chat: ChatSummary, meId: string) {
   const last = chat.lastMessage;
   if (!last) return chat.type === "direct" && chat.peer ? `@${chat.peer.username}` : "No messages yet";
+  if (last.type === "system") return last.preview;
   const mine = last.senderId === meId;
   return `${mine ? "You: " : ""}${last.preview}`;
 }

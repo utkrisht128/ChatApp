@@ -13,6 +13,7 @@ export const messageKeys = {
 export type MessagePages = InfiniteData<MessagePage, string | null>;
 
 const byId = (a: Message, b: Message) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+// System messages carry server-rendered text in `body`, so the same preview works for them.
 const previewFor = (m: Message) => (m.deletedAt ? "Message deleted" : messagePreview(m.body));
 
 function mapPages(qc: QueryClient, chatId: string, fn: (pages: MessagePage[]) => MessagePage[]) {
@@ -60,13 +61,14 @@ export function applyReceipt(qc: QueryClient, chatId: string, receipt: Receipt) 
 
 /** Moves the chat to the top of the list (below pinned chats) with the new preview and unread count. */
 export function applyMessageToChatList(qc: QueryClient, message: Message, opts: { meId: string; isActive: boolean }) {
-  const mine = message.senderId === opts.meId;
+  const mine = message.senderId === opts.meId && message.type !== "system";
+  const countsAsUnread = !mine && !opts.isActive && message.type !== "system";
   const update = (c: ChatSummary): ChatSummary => ({
     ...c,
     lastMessage: { id: message.id, senderId: message.senderId, preview: previewFor(message), type: message.type, createdAt: message.createdAt },
     lastMessageAt: message.createdAt,
     // Sending clears your own unread (the server does the same); the open chat is read momentarily.
-    unreadCount: mine ? 0 : opts.isActive ? c.unreadCount : c.unreadCount + 1,
+    unreadCount: mine ? 0 : countsAsUnread ? c.unreadCount + 1 : c.unreadCount,
     mentionCount: mine ? 0 : c.mentionCount,
   });
 

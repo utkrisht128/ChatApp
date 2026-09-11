@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { objectIdSchema, type MessageType } from "./chats";
 import type { Page } from "./api";
+import type { SystemInfo } from "./groups";
 
 export const MAX_MESSAGE_LENGTH = 4000;
 /** Messages can be edited for this long after sending. */
@@ -62,6 +63,8 @@ export type Message = {
   reactions: Reaction[];
   mentions: string[];
   forwarded: boolean;
+  /** Present on type "system" (e.g. "Alice added Bob"); `body` then holds a server-rendered fallback. */
+  system: SystemInfo | null;
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
@@ -90,6 +93,8 @@ export interface ServerToClientEvents {
   presence: (p: { userId: string; online?: boolean; lastSeenAt?: string | null }) => void;
   /** You read a chat on another device. */
   "chat:read": (p: { chatId: string; unreadCount: number }) => void;
+  /** Group info, membership or roles changed — refetch. Also sent to someone just removed. */
+  "chat:updated": (p: { chatId: string }) => void;
 }
 
 export interface ClientToServerEvents {

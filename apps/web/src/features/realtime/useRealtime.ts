@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { chatKeys, patchChatInCache } from "@/features/chats/api";
+import { groupKey } from "@/features/groups/api";
 import { retryFailed } from "@/features/messages/api";
 import { applyMessageToChatList, applyPresence, applyReceipt, messageKeys, removeMessage, replaceMessage, upsertMessage } from "@/features/messages/cache";
 import { connectSocket, disconnectSocket } from "@/lib/socket";
@@ -56,6 +57,12 @@ export function useRealtime(meId: string) {
     socket.on("receipt:updated", ({ chatId, ...receipt }) => applyReceipt(qc, chatId, receipt));
     socket.on("typing", ({ chatId, userId, isTyping }) => typing.set(chatId, userId, isTyping));
     socket.on("presence", (p) => applyPresence(qc, p));
+    // Group info/membership changed (or we were removed): refetch; a lost membership shows as "not found".
+    socket.on("chat:updated", ({ chatId }) => {
+      void qc.invalidateQueries({ queryKey: groupKey(chatId) });
+      void qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
+      void qc.invalidateQueries({ queryKey: chatKeys.lists });
+    });
     socket.on("chat:read", ({ chatId, unreadCount }) =>
       patchChatInCache(qc, chatId, (c) => ({ ...c, unreadCount, mentionCount: unreadCount ? c.mentionCount : 0 })),
     );

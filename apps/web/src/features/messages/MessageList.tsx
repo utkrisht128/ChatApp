@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
-import type { ChatSummary, Message } from "@chat/shared";
+import { describeSystemEvent, type ChatSummary, type Message } from "@chat/shared";
 import { Avatar } from "@/components/ui/Avatar";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
@@ -15,14 +15,29 @@ import { MessageBubble } from "./MessageBubble";
 import { buildRows } from "./rows";
 import { statusOf } from "./status";
 
+export type Person = { name: string; avatarUrl: string | null };
+
 type Props = {
   chat: ChatSummary;
   meId: string;
   nameOf: (userId: string) => string;
+  /** Group chats show each sender's name and avatar. */
+  personOf: (userId: string) => Person;
   onReply: (m: Message) => void;
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
 };
+
+function SystemRow({ message, meId, nameOf }: { message: Message; meId: string; nameOf: (id: string) => string }) {
+  const text = message.system
+    ? describeSystemEvent(message.system, (id, asTarget) => (id === meId ? (asTarget ? "you" : "You") : nameOf(id)))
+    : message.body;
+  return (
+    <div className="my-2 flex justify-center px-6">
+      <p className="max-w-md rounded-full bg-surface/85 px-3 py-1 text-center text-xs text-muted shadow-bubble">{text}</p>
+    </div>
+  );
+}
 
 function Intro({ chat }: { chat: ChatSummary }) {
   return (
@@ -45,7 +60,8 @@ function ListSkeleton() {
   );
 }
 
-export function MessageList({ chat, meId, nameOf, onReply, onEdit, onDelete }: Props) {
+export function MessageList({ chat, meId, nameOf, personOf, onReply, onEdit, onDelete }: Props) {
+  const isGroup = chat.type === "group";
   const qc = useQueryClient();
   const query = useMessages(chat.id);
   const receipts = useReceipts(chat.id);
@@ -66,7 +82,8 @@ export function MessageList({ chat, meId, nameOf, onReply, onEdit, onDelete }: P
   useEffect(() => {
     if (firstUnread !== undefined || !query.data) return;
     const n = initialUnread.current;
-    const fromOthers = messages.filter((m) => m.senderId !== meId);
+    // Group events never count as unread (matches the server's count).
+    const fromOthers = messages.filter((m) => m.senderId !== meId && m.type !== "system");
     const target = n > 0 ? (fromOthers.at(-n) ?? fromOthers[0]) : undefined;
     setFirstUnread(target ? { id: target.id, count: n } : null);
   }, [firstUnread, query.data, messages, meId]);
@@ -90,7 +107,7 @@ export function MessageList({ chat, meId, nameOf, onReply, onEdit, onDelete }: P
   }, [firstUnread]);
 
   // Mark as read while the chat is open and the window is in view.
-  const newestFromOthers = useMemo(() => [...messages].reverse().find((m) => m.senderId !== meId)?.id, [messages, meId]);
+  const newestFromOthers = useMemo(() => [...messages].reverse().find((m) => m.senderId !== meId && m.type !== "system")?.id, [messages, meId]);
   const lastMarked = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!newestFromOthers) return;
@@ -213,10 +230,13 @@ export function MessageList({ chat, meId, nameOf, onReply, onEdit, onDelete }: P
                 </div>
               );
             }
+            if (row.kind === "system") return <SystemRow key={row.key} message={row.message} meId={meId} nameOf={nameOf} />;
             const m = row.message;
+            const sender = isGroup && !row.mine ? personOf(m.senderId) : undefined;
             return (
               <div key={row.key} className="[contain-intrinsic-size:auto_56px] [content-visibility:auto]">
                 <MessageBubble
+                  sender={sender && { id: m.senderId, ...sender }}
                   message={m}
                   pending={row.pending}
                   mine={row.mine}

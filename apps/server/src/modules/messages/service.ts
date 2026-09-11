@@ -1,5 +1,14 @@
 import { Types } from "mongoose";
-import { EDIT_WINDOW_MS, messagePreview, type Message as MessageDTO, type MessagePage, type MessageType, type Receipt, type SendMessageInput } from "@chat/shared";
+import {
+  EDIT_WINDOW_MS,
+  messagePreview,
+  type Message as MessageDTO,
+  type MessagePage,
+  type MessageType,
+  type Receipt,
+  type SendMessageInput,
+  type SystemEvent,
+} from "@chat/shared";
 import { badRequest, forbidden, notFound } from "../../lib/errors";
 import { isObjectId, sameId, type Id } from "../../lib/ids";
 import { Conversation } from "../../models/Conversation";
@@ -31,6 +40,14 @@ export function toMessage(m: MessageLean): MessageDTO {
     reactions: [...grouped].map(([emoji, userIds]) => ({ emoji, userIds })),
     mentions: (m.mentions ?? []).map(String),
     forwarded: Boolean(m.forwarded),
+    system: m.system
+      ? {
+          event: m.system.event as SystemEvent,
+          actorId: String(m.system.actorId),
+          targetIds: (m.system.targetIds ?? []).map(String),
+          ...(m.system.value ? { value: m.system.value } : {}),
+        }
+      : null,
     createdAt: m.createdAt.toISOString(),
     editedAt: m.editedAt?.toISOString() ?? null,
     deletedAt: m.deletedAt?.toISOString() ?? null,
@@ -78,9 +95,12 @@ async function broadcastReceipt(conversationId: Types.ObjectId, subjectId: Id) {
 
 export async function listMessages(viewerId: Id, chatId: string, opts: { before?: string; limit: number }): Promise<MessagePage> {
   const member = await requireMembership(chatId, viewerId);
+  const conv = await Conversation.findById(member.conversationId).select("type").lean();
   const docs = await Message.find({
     conversationId: member.conversationId,
     hiddenFor: { $ne: viewerId },
+    // Group members only see history from when they (last) joined.
+    ...(conv?.type === "group" ? { createdAt: { $gte: member.joinedAt } } : {}),
     ...(opts.before ? { _id: { $lt: oid(opts.before) } } : {}),
   })
     .sort({ _id: -1 })
@@ -198,6 +218,7 @@ export async function deleteMessage(userId: Id, messageId: string, scope: "me" |
     return;
   }
 
+  if (msg.type === "system") throw badRequest("Group events can't be deleted for everyone");
   if (!sameId(msg.senderId, userId)) throw forbidden("You can only delete your own messages for everyone");
   if (msg.deletedAt) return;
   msg.deletedAt = new Date();
@@ -217,6 +238,7 @@ export async function deleteMessage(userId: Id, messageId: string, scope: "me" |
 export async function setReaction(userId: Id, messageId: string, emoji: string | null) {
   const msg = await loadVisibleMessage(userId, messageId);
   if (msg.deletedAt) throw badRequest("You can't react to a deleted message");
+  if (msg.type === "system") throw badRequest("You can't react to group events");
   const uid = oid(userId);
   const others = { $filter: { input: "$reactions", cond: { $ne: ["$$this.userId", uid] } } };
   await Message.collection.updateOne({ _id: msg._id }, [
@@ -235,11 +257,13 @@ export async function markRead(userId: Id, chatId: string, messageId: string) {
   if (!(await Message.exists({ _id: id, conversationId: member.conversationId }))) throw messageNotFound();
   if (member.lastReadMessageId && member.lastReadMessageId >= id) return { unreadCount: member.unreadCount };
 
+  // Same rule as when counting up on send: system events never count as unread.
   const unreadCount = await Message.countDocuments({
     conversationId: member.conversationId,
     _id: { $gt: id },
     senderId: { $ne: userId },
     hiddenFor: { $ne: userId },
+    type: { $ne: "system" },
   });
   await Member.updateOne(
     { _id: member._id },

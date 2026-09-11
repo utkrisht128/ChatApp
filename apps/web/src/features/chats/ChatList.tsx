@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArrowLeft, MessageCirclePlus, MoreVertical, Search, SearchX } from "lucide-react";
+import { Archive, ArrowLeft, MessageCirclePlus, MoreVertical, Search, SearchX, UsersRound } from "lucide-react";
+import { NewGroupDialog } from "@/features/groups/NewGroupDialog";
 import { useMatch } from "react-router";
 import { ActionDropdown } from "@/components/ui/ActionMenu";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -49,6 +50,7 @@ export function ChatList() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [newGroupOpen, setNewGroupOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -107,7 +109,12 @@ export function ChatList() {
             <IconButton label="New chat" onClick={() => setNewChatOpen(true)}>
               <MessageCirclePlus />
             </IconButton>
-            <ActionDropdown actions={[{ id: "archived", label: "Archived chats", icon: Archive, onSelect: () => setView("archived"), hidden: archivedView }]}>
+            <ActionDropdown
+              actions={[
+                { id: "group", label: "New group", icon: UsersRound, onSelect: () => setNewGroupOpen(true) },
+                { id: "archived", label: "Archived chats", icon: Archive, onSelect: () => setView("archived"), hidden: archivedView },
+              ]}
+            >
               <IconButton label="More options" className="-mr-2">
                 <MoreVertical />
               </IconButton>
@@ -193,7 +200,15 @@ export function ChatList() {
         )}
       </div>
 
-      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
+      <NewChatDialog
+        open={newChatOpen}
+        onOpenChange={setNewChatOpen}
+        onNewGroup={() => {
+          setNewChatOpen(false);
+          setNewGroupOpen(true);
+        }}
+      />
+      <NewGroupDialog open={newGroupOpen} onOpenChange={setNewGroupOpen} />
     </div>
   );
 }

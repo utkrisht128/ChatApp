@@ -14,11 +14,17 @@ const SIZES = {
   "2xl": "size-28 text-4xl",
 };
 
-function hash(s: string) {
+// Same hues, lightened for text on dark bubbles (≥ 4.5:1 on the dark incoming bubble).
+const PALETTE_ON_DARK = ["#f87171", "#fb923c", "#a3e635", "#34d399", "#22d3ee", "#60a5fa", "#a78bfa", "#e879f9", "#f472b6"];
+
+export function hash(s: string) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
   return Math.abs(h);
 }
+
+/** Stable per-person colour for sender names in group chats; matches their avatar hue. */
+export const nameColor = (seed: string, theme: "light" | "dark") => (theme === "dark" ? PALETTE_ON_DARK : PALETTE)[hash(seed) % PALETTE.length];
 
 type AvatarProps = {
   name: string;
