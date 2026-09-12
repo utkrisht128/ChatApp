@@ -13,7 +13,11 @@ services:
 
     # The monorepo builds from the root: npm ci installs every workspace, and build:server
     # bundles @chat/shared into dist/index.js so the shared package needs no publish step.
-    buildCommand: npm ci && npm run build:server
+    #
+    # --include=dev is required, not decorative: NODE_ENV=production below applies at BUILD time
+    # as well as at runtime, and npm resolves that to omit=["dev"] — which would strip tsup and
+    # typescript, the very tools the build runs, and fail with "tsup: not found".
+    buildCommand: npm ci --include=dev && npm run build:server
     startCommand: npm run start
 
     # The server answers this before it has a database connection only if it started; it fails

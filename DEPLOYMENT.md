@@ -66,7 +66,7 @@ settings by hand means the file is documentation rather than configuration. Use 
 | Repository | this repo, branch `main` |
 | Root directory | *(leave blank — the build runs from the monorepo root)* |
 | Language / runtime | Node |
-| Build command | `npm ci && npm run build:server` |
+| Build command | `npm ci --include=dev && npm run build:server` |
 | Start command | `npm run start` |
 | Instance type | Free |
 | Health check path (Advanced) | `/health` |
@@ -87,6 +87,10 @@ Then add the environment variables below by hand — the non-secret ones are the
 `TRUST_PROXY=1` matters: Render terminates TLS at one proxy, and this is how the real client IP is
 derived. Get it wrong and every request looks like it comes from the same address, which lets one
 client exhaust the rate limits for everyone.
+
+`--include=dev` in the build command matters just as much. Render applies environment variables at
+build time as well as at runtime, and npm turns `NODE_ENV=production` into `omit=["dev"]` — so a
+plain `npm ci` would skip `tsup` and `typescript` and the build would fail with "tsup: not found".
 
 Do **not** set `PORT` — Render provides it.
 
