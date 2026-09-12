@@ -1,11 +1,12 @@
 import { Types } from "mongoose";
 import { MAX_PINNED_CHATS, type ChatSummary, type MemberRole, type MessageType, type Page, type UpdateMembershipInput } from "@chat/shared";
-import { badRequest, notFound } from "../../lib/errors";
+import { badRequest, forbidden, notFound } from "../../lib/errors";
 import { isObjectId, type Id } from "../../lib/ids";
 import { fileUrl, toPublicUser } from "../../lib/serialize";
 import { Conversation } from "../../models/Conversation";
 import { Member, type MemberFields } from "../../models/Member";
 import { User } from "../../models/User";
+import { blockExists, blockedPeerIds } from "../moderation/blocks";
 import { PUBLIC_USER_FIELDS, presenceOf } from "../users/presence";
 
 type MemberLean = MemberFields & { _id: Types.ObjectId };
@@ -42,12 +43,16 @@ async function buildSummaries(viewerId: Id, members: MemberLean[]): Promise<Chat
     .filter((id): id is string => Boolean(id));
   const peers = peerIds.length ? await User.find({ _id: { $in: peerIds } }).select(PUBLIC_USER_FIELDS).lean() : [];
   const peerById = new Map(peers.map((u) => [String(u._id), u]));
+  // Blocking hides presence in both directions.
+  const blocked = await blockedPeerIds(viewerId, peerIds);
 
   return members.flatMap((m): ChatSummary[] => {
     const c = convById.get(String(m.conversationId));
     if (!c) return [];
     const peerDoc = c.type === "direct" ? peerById.get(peerIdOf(c.directKey, viewer) ?? "") : undefined;
-    const peer = peerDoc ? toPublicUser(peerDoc, presenceOf(peerDoc, { isContact: true })) : null;
+    const peer = peerDoc
+      ? toPublicUser(peerDoc, blocked.has(String(peerDoc._id)) ? undefined : presenceOf(peerDoc, { isContact: true }))
+      : null;
     const last = c.lastMessage;
     return [
       {
@@ -150,6 +155,7 @@ export async function openDirectChat(meId: Types.ObjectId, otherId: string) {
   if (String(meId) === otherId) throw badRequest("You can't start a chat with yourself");
   const other = await User.findOne({ _id: otherId, bannedAt: null }).select("_id");
   if (!other) throw notFound("USER_NOT_FOUND", "User not found");
+  if (await blockExists(meId, other._id)) throw forbidden("You can't start a chat with this person", "BLOCKED");
 
   const directKey = directKeyOf(meId, other._id);
   let conv = await Conversation.findOne({ directKey });

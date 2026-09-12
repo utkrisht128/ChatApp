@@ -1,5 +1,5 @@
 import { memo, useRef, useState, type PointerEvent } from "react";
-import { Ban, Check, CheckCheck, CircleAlert, Clock3, Copy, CornerUpLeft, Forward, MoreHorizontal, Pencil, Pin, PinOff, RotateCw, Star, Trash2 } from "lucide-react";
+import { Ban, Check, CheckCheck, CircleAlert, Clock3, Copy, CornerUpLeft, Flag, Forward, MoreHorizontal, Pencil, Pin, PinOff, RotateCw, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { EDIT_WINDOW_MS, type Message } from "@chat/shared";
 import { ActionDropdown, ActionMenu, type Action } from "@/components/ui/ActionMenu";
@@ -11,6 +11,7 @@ import { cn } from "@/lib/cn";
 import { formatClock } from "@/lib/format";
 import type { PendingMessage } from "@/stores/outbox";
 import { AttachmentsView } from "./Attachments";
+import { LinkPreviewCard } from "./LinkPreviewCard";
 import { RichText, type MentionLookup } from "./RichText";
 import { QuickReactions, ReactionChips, ReactionPopover } from "./Reactions";
 import type { DeliveryStatus } from "./status";
@@ -98,6 +99,7 @@ export type BubbleProps = {
   onForward: (m: Message) => void;
   onPin: (m: Message, pinned: boolean) => void;
   onStar: (m: Message, starred: boolean) => void;
+  onReport: (m: Message) => void;
 };
 
 export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
@@ -133,9 +135,11 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
       hidden: !interactive || !props.canPin,
     },
     { id: "edit", label: "Edit", icon: Pencil, onSelect: () => props.onEdit(m), hidden: !editable },
-    { id: "retry", label: "Retry sending", icon: RotateCw, onSelect: () => pending && props.onRetry(pending), hidden: pending?.status !== "failed" },
+    // A permanent failure (blocked, no longer a member) can't succeed on retry.
+    { id: "retry", label: "Retry sending", icon: RotateCw, onSelect: () => pending && props.onRetry(pending), hidden: pending?.status !== "failed" || !pending.retryable },
     { id: "discard", label: "Discard", icon: Trash2, danger: true, onSelect: () => pending && props.onDiscard(pending), hidden: !pending || pending.status !== "failed" },
     { id: "delete", label: "Delete", icon: Trash2, danger: true, onSelect: () => props.onDelete(m), hidden: Boolean(pending) },
+    { id: "report", label: "Report", icon: Flag, danger: true, onSelect: () => props.onReport(m), hidden: mine || !interactive },
   ];
 
   const who = mine ? "You" : nameOf(m.senderId);
@@ -197,6 +201,7 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
               </button>
             )}
             {!deleted && m.attachments.length > 0 && <AttachmentsView attachments={m.attachments} mine={mine} pending={pending?.attachments} />}
+            {!deleted && !pending && m.body && <LinkPreviewCard body={m.body} mine={mine} />}
             {mediaOnly && !deleted ? (
               <span className="absolute right-2.5 bottom-2.5 flex items-center gap-1 rounded-full bg-black/50 px-1.5 text-[11px] leading-5 text-white">
                 <time dateTime={m.createdAt}>{time}</time>
@@ -262,9 +267,11 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
         <div role="alert" className="mt-1 flex items-center gap-2 text-xs text-danger">
           <CircleAlert className="size-3.5" />
           <span>{pending.error ?? "Not sent."}</span>
-          <button className="font-semibold underline" onClick={() => props.onRetry(pending)}>
-            Retry
-          </button>
+          {pending.retryable && (
+            <button className="font-semibold underline" onClick={() => props.onRetry(pending)}>
+              Retry
+            </button>
+          )}
           <button className="font-semibold underline" onClick={() => props.onDiscard(pending)}>
             Discard
           </button>

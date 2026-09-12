@@ -18,6 +18,7 @@ import { ApiError } from "@/lib/api";
 import { useTypingUsers } from "@/stores/typing";
 import { useUi } from "@/stores/ui";
 import type { MentionLookup } from "@/features/messages/RichText";
+import { ReportDialog, type ReportTarget } from "@/features/moderation/ReportDialog";
 import { toLocalFiles, type LocalFile } from "./AttachmentTray";
 import { ChatDetails } from "./ChatDetails";
 import { Composer } from "./Composer";
@@ -67,6 +68,7 @@ function Conversation({ chat }: { chat: ChatSummary }) {
   const [editing, setEditing] = useState<Message | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
   const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [reporting, setReporting] = useState<ReportTarget | null>(null);
   const [jumpTarget, setJumpTarget] = useState<{ id: string; nonce: number } | null>(null);
   const jumpTo = useCallback((id: string) => setJumpTarget({ id, nonce: Date.now() }), []);
   const [files, setFiles] = useState<LocalFile[]>([]);
@@ -191,6 +193,7 @@ function Conversation({ chat }: { chat: ChatSummary }) {
           onEdit={onEdit}
           onDelete={setDeleting}
           onForward={setForwarding}
+          onReport={(m) => setReporting({ subject: "message", id: m.id, name: nameOf(m.senderId), senderId: m.senderId })}
         />
         <Composer
           chatId={chat.id}
@@ -233,6 +236,7 @@ function Conversation({ chat }: { chat: ChatSummary }) {
       )}
 
       <ForwardDialog message={forwarding} onClose={() => setForwarding(null)} />
+      <ReportDialog target={reporting} onClose={() => setReporting(null)} />
 
       <DeleteMessageDialog
         message={deleting}

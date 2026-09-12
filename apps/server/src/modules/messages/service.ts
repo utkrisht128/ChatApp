@@ -25,6 +25,7 @@ import { User } from "../../models/User";
 import { storage } from "../../lib/storage";
 import { emitToUsers } from "../../realtime/bus";
 import { requireMembership } from "../chats/service";
+import { blockExists } from "../moderation/blocks";
 import { claimAttachments, deleteFilesUnusedBy, toAttachment } from "../files/service";
 
 type MessageLean = MessageFields & { _id: Types.ObjectId };
@@ -154,10 +155,15 @@ async function resolveMentions(conversationId: Types.ObjectId, senderId: Id, bod
 /** Loads the chat a message is being sent to and checks the sender may post in it. */
 async function openForSending(senderId: Types.ObjectId, chatId: string) {
   const member = await requireMembership(chatId, senderId);
-  const conv = await Conversation.findById(member.conversationId).select("type permissions");
+  const conv = await Conversation.findById(member.conversationId).select("type permissions directKey");
   if (!conv) throw notFound("CHAT_NOT_FOUND", "Chat not found");
   if (conv.type === "group" && conv.permissions?.send === "admins" && member.role === "member") {
     throw forbidden("Only admins can send messages in this group");
+  }
+  if (conv.type === "direct") {
+    // Blocking has to stop the message itself, not just hide the chat in the UI.
+    const peer = conv.directKey?.split(":").find((id) => !sameId(id, senderId));
+    if (peer && (await blockExists(senderId, peer))) throw forbidden("You can't send messages to this person", "BLOCKED");
   }
   return { member, conv };
 }

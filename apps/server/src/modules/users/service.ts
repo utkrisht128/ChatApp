@@ -7,6 +7,7 @@ import { toPublicUser } from "../../lib/serialize";
 import { Conversation } from "../../models/Conversation";
 import { User, type UserDoc } from "../../models/User";
 import { directKeyOf } from "../chats/service";
+import { blockExists } from "../moderation/blocks";
 import { PUBLIC_USER_FIELDS, presenceOf } from "./presence";
 
 export async function updateProfile(user: UserDoc, input: z.output<typeof updateProfileSchema>) {
@@ -67,6 +68,10 @@ export async function searchUsers(meId: Id, query: string): Promise<PublicUser[]
 export async function getProfile(meId: Id, username: string) {
   const user = await User.findOne({ username: username.toLowerCase(), bannedAt: null }).select(PUBLIC_USER_FIELDS).lean();
   if (!user) throw notFound("USER_NOT_FOUND", "User not found");
-  const isContact = Boolean(await Conversation.exists({ directKey: directKeyOf(meId, user._id) }));
-  return toPublicUser(user, presenceOf(user, { isContact }));
+  const [isContact, blocked] = await Promise.all([
+    Conversation.exists({ directKey: directKeyOf(meId, user._id) }).then(Boolean),
+    blockExists(meId, user._id),
+  ]);
+  // A block hides presence both ways, without revealing that a block exists.
+  return toPublicUser(user, blocked ? undefined : presenceOf(user, { isContact }));
 }

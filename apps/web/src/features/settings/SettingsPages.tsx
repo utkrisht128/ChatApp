@@ -1,5 +1,5 @@
 import { useState, type ComponentType, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, AtSign, Bell, ChevronRight, KeyRound, Lock, LogOut, MessageSquareText, Monitor, Moon, Palette, Sun, UserRound } from "lucide-react";
+import { ArrowLeft, AtSign, Ban, Bell, ChevronRight, KeyRound, Lock, LogOut, MessageSquareText, Monitor, Moon, Palette, Sun, UserRound } from "lucide-react";
 import { RadioGroup } from "radix-ui";
 import { Navigate, NavLink, Outlet, useMatch, useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -9,7 +9,10 @@ import { Button, IconButton } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Dialog";
 import { RadioRows, SettingsGroup, SwitchRow } from "@/components/ui/Switch";
 import { PasswordField, TextAreaField, TextField } from "@/components/ui/TextField";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { EmptyState, ErrorState } from "@/components/ui/States";
 import { useChangePassword, useCurrentUser, useLogout, useLogoutEverywhere, useResendVerification } from "@/features/auth/api";
+import { useBlocked, useSetBlocked } from "@/features/moderation/api";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -25,6 +28,7 @@ const SECTIONS: Section[] = [
   { to: "profile", label: "Profile", description: "Name, username and bio", icon: UserRound },
   { to: "account", label: "Account", description: "Email, password and sessions", icon: KeyRound },
   { to: "privacy", label: "Privacy", description: "Last seen, online status, read receipts", icon: Lock },
+  { to: "blocked", label: "Blocked", description: "People you've blocked", icon: Ban },
   { to: "notifications", label: "Notifications", description: "Messages, groups and sounds", icon: Bell },
   { to: "appearance", label: "Appearance", description: "Light, dark or system theme", icon: Palette },
   { to: "chats", label: "Chats", description: "Keyboard and sending", icon: MessageSquareText },
@@ -307,6 +311,57 @@ export function PrivacySettings() {
       <SettingsGroup footer="If you turn off read receipts, you won't see other people's either.">
         <SwitchRow label="Read receipts" description="Let people know when you've read their messages." checked={settings.readReceipts} onCheckedChange={(v) => update.mutate({ readReceipts: v })} />
       </SettingsGroup>
+    </SettingsPage>
+  );
+}
+
+/* ── Blocked ────────────────────────────────────────────────────────────── */
+
+export function BlockedSettings() {
+  const blocked = useBlocked();
+  const setBlocked = useSetBlocked();
+  const users = blocked.data ?? [];
+
+  return (
+    <SettingsPage title="Blocked">
+      {blocked.isPending ? (
+        <div role="status" aria-label="Loading blocked people" className="flex flex-col gap-2">
+          {Array.from({ length: 3 }, (_, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-2xl border border-border bg-surface p-3">
+              <Skeleton className="size-10 rounded-full" />
+              <Skeleton className="h-3.5 w-32" />
+            </div>
+          ))}
+        </div>
+      ) : blocked.isError ? (
+        <ErrorState title="Couldn't load your blocked list" error={blocked.error} onRetry={() => blocked.refetch()} />
+      ) : users.length === 0 ? (
+        <EmptyState
+          icon={Ban}
+          title="You haven't blocked anyone"
+          description="Blocking someone stops them messaging you or seeing when you're online. You can block someone from their chat."
+        />
+      ) : (
+        <SettingsGroup title={`${users.length} blocked`} footer="Blocked people can't message you, start a chat with you, or see when you're online.">
+          {users.map((u) => (
+            <div key={u.id} className="flex items-center gap-3 px-4 py-3">
+              <Avatar name={u.displayName} src={u.avatarUrl} seed={u.id} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[15px] font-medium">{u.displayName}</p>
+                <p className="truncate text-sm text-muted">@{u.username}</p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={setBlocked.isPending}
+                onClick={() => setBlocked.mutate({ userId: u.id, blocked: false, name: u.displayName })}
+              >
+                Unblock
+              </Button>
+            </div>
+          ))}
+        </SettingsGroup>
+      )}
     </SettingsPage>
   );
 }

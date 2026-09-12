@@ -20,6 +20,7 @@ const SettingsIndex = lazy(() => settings().then((m) => ({ default: m.SettingsIn
 const ProfileSettings = lazy(() => settings().then((m) => ({ default: m.ProfileSettings })));
 const AccountSettings = lazy(() => settings().then((m) => ({ default: m.AccountSettings })));
 const PrivacySettings = lazy(() => settings().then((m) => ({ default: m.PrivacySettings })));
+const BlockedSettings = lazy(() => settings().then((m) => ({ default: m.BlockedSettings })));
 const NotificationSettings = lazy(() => settings().then((m) => ({ default: m.NotificationSettings })));
 const AppearanceSettings = lazy(() => settings().then((m) => ({ default: m.AppearanceSettings })));
 const ChatSettings = lazy(() => settings().then((m) => ({ default: m.ChatSettings })));
@@ -80,6 +81,7 @@ export const router = createBrowserRouter([
                   { path: "profile", element: s(<ProfileSettings />) },
                   { path: "account", element: s(<AccountSettings />) },
                   { path: "privacy", element: s(<PrivacySettings />) },
+                  { path: "blocked", element: s(<BlockedSettings />) },
                   { path: "notifications", element: s(<NotificationSettings />) },
                   { path: "appearance", element: s(<AppearanceSettings />) },
                   { path: "chats", element: s(<ChatSettings />) },

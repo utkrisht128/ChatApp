@@ -33,6 +33,7 @@ type Props = {
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
   onForward: (m: Message) => void;
+  onReport: (m: Message) => void;
 };
 
 function SystemRow({ message, meId, nameOf }: { message: Message; meId: string; nameOf: (id: string) => string }) {
@@ -67,7 +68,7 @@ function ListSkeleton() {
   );
 }
 
-export function MessageList({ chat, meId, nameOf, personOf, mentionOf, canPin, jumpTarget, onReply, onEdit, onDelete, onForward }: Props) {
+export function MessageList({ chat, meId, nameOf, personOf, mentionOf, canPin, jumpTarget, onReply, onEdit, onDelete, onForward, onReport }: Props) {
   const isGroup = chat.type === "group";
   const qc = useQueryClient();
   const query = useMessages(chat.id);
@@ -281,6 +282,7 @@ export function MessageList({ chat, meId, nameOf, personOf, mentionOf, canPin, j
                   onForward={onForward}
                   onPin={onPin}
                   onStar={onStar}
+                  onReport={onReport}
                 />
               </div>
             );

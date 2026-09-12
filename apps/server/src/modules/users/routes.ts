@@ -1,9 +1,10 @@
 import { Router } from "express";
-import { setAvatarSchema, updateProfileSchema, updateSettingsSchema, userSearchQuerySchema } from "@chat/shared";
+import { setAvatarSchema, setBlockedSchema, updateProfileSchema, updateSettingsSchema, userSearchQuerySchema } from "@chat/shared";
 import { ok } from "../../lib/http";
 import { toMe } from "../../lib/serialize";
 import { authOf } from "../../middleware/auth";
 import { limiter } from "../../middleware/security";
+import { listBlocked, setBlocked } from "../moderation/service";
 import * as users from "./service";
 
 const searchLimiter = limiter({ windowMs: 60_000, limit: 60, keyGenerator: (req) => req.auth?.user.id ?? "anon" });
@@ -13,6 +14,16 @@ export const usersRouter = Router();
 usersRouter.get("/search", searchLimiter, async (req, res) => {
   const { q } = userSearchQuerySchema.parse(req.query);
   ok(res, { items: await users.searchUsers(authOf(req).user._id, q) });
+});
+
+// Before "/:username", so "blocked" isn't read as someone's username.
+usersRouter.get("/blocked", async (req, res) => {
+  ok(res, { users: await listBlocked(authOf(req).user._id) });
+});
+
+usersRouter.put("/:userId/blocked", async (req, res) => {
+  const { blocked } = setBlockedSchema.parse(req.body);
+  ok(res, { users: await setBlocked(authOf(req).user._id, req.params.userId as string, blocked) });
 });
 
 usersRouter.patch("/me", async (req, res) => {

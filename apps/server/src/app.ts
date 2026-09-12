@@ -13,6 +13,8 @@ import { chatsRouter } from "./modules/chats/routes";
 import { filesRouter } from "./modules/files/routes";
 import { groupsRouter } from "./modules/groups/routes";
 import { chatMessagesRouter, messagesRouter } from "./modules/messages/routes";
+import { linksRouter } from "./modules/links/routes";
+import { reportsRouter } from "./modules/moderation/routes";
 import { searchRouter } from "./modules/search/routes";
 import { usersRouter } from "./modules/users/routes";
 
@@ -54,6 +56,8 @@ export function createApp() {
   api.use("/groups", requireAuth, groupsRouter);
   api.use("/files", requireAuth, filesRouter);
   api.use("/search", requireAuth, searchRouter);
+  api.use("/reports", requireAuth, reportsRouter);
+  api.use("/links", requireAuth, linksRouter);
 
   app.use("/api", apiLimiter, csrfGuard, authenticate, api);
 

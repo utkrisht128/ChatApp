@@ -1,11 +1,15 @@
-import type { ButtonHTMLAttributes, ComponentType, ReactElement, Ref } from "react";
-import { Archive, ArchiveRestore, Bell, BellOff, Pin, PinOff } from "lucide-react";
+import { useState, type ButtonHTMLAttributes, type ComponentType, type ReactElement, type Ref } from "react";
+import { Archive, ArchiveRestore, Bell, BellOff, Ban, Flag, Pin, PinOff } from "lucide-react";
 import type { ChatSummary } from "@chat/shared";
 import { ActionDropdown } from "@/components/ui/ActionMenu";
 import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/Dialog";
 import { MUTE_OPTIONS, muteUntil, useUpdateMembership } from "@/features/chats/api";
 import { presenceText } from "@/features/chats/presence";
 import { GroupDetails } from "@/features/groups/GroupDetails";
+import { useBlocked, useSetBlocked } from "@/features/moderation/api";
+import { ReportDialog, type ReportTarget } from "@/features/moderation/ReportDialog";
 
 // Spreads unknown props so it can be a Radix trigger (asChild passes handlers, aria and ref).
 function QuickAction({
@@ -61,6 +65,49 @@ function QuickActions({ chat }: { chat: ChatSummary }) {
   );
 }
 
+/** Block and report, for a direct chat. Both are enforced on the server. */
+function SafetyActions({ chat }: { chat: ChatSummary }) {
+  const peer = chat.peer;
+  const blocked = useBlocked();
+  const setBlocked = useSetBlocked();
+  const [confirmBlock, setConfirmBlock] = useState(false);
+  const [reporting, setReporting] = useState<ReportTarget | null>(null);
+  if (!peer) return null;
+
+  const isBlocked = (blocked.data ?? []).some((u) => u.id === peer.id);
+
+  return (
+    <div className="mt-6 flex w-full flex-col gap-1 border-t border-border pt-4">
+      <Button
+        variant="danger-ghost"
+        className="w-full justify-start"
+        loading={setBlocked.isPending}
+        onClick={() => (isBlocked ? setBlocked.mutate({ userId: peer.id, blocked: false, name: peer.displayName }) : setConfirmBlock(true))}
+      >
+        <Ban className="size-4" /> {isBlocked ? `Unblock ${peer.displayName}` : `Block ${peer.displayName}`}
+      </Button>
+      <Button
+        variant="danger-ghost"
+        className="w-full justify-start"
+        onClick={() => setReporting({ subject: "user", id: peer.id, name: peer.displayName })}
+      >
+        <Flag className="size-4" /> Report {peer.displayName}
+      </Button>
+
+      <ConfirmDialog
+        open={confirmBlock}
+        onOpenChange={setConfirmBlock}
+        title={`Block ${peer.displayName}?`}
+        description="They won't be able to message you, start a chat with you, or see when you're online. They aren't told that you blocked them."
+        confirmLabel="Block"
+        loading={setBlocked.isPending}
+        onConfirm={() => setBlocked.mutate({ userId: peer.id, blocked: true, name: peer.displayName }, { onSuccess: () => setConfirmBlock(false) })}
+      />
+      <ReportDialog target={reporting} onClose={() => setReporting(null)} />
+    </div>
+  );
+}
+
 export function ChatDetails({ chat }: { chat: ChatSummary }) {
   if (chat.type === "group") return <GroupDetails chat={chat} quickActions={<QuickActions chat={chat} />} />;
   return (
@@ -73,6 +120,7 @@ export function ChatDetails({ chat }: { chat: ChatSummary }) {
       <div className="mt-6 w-full">
         <QuickActions chat={chat} />
       </div>
+      <SafetyActions chat={chat} />
     </div>
   );
 }
