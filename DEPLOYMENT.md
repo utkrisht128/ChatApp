@@ -3,6 +3,21 @@
 Netlify serves the frontend; Render runs the API and WebSocket server; MongoDB Atlas stores both
 the data and the uploaded files (GridFS). All three have free tiers that fit this app.
 
+## 0. Prerequisite: the code has to be on a Git host
+
+Both Render (Blueprint) and Netlify (Import an existing project) deploy **from a Git repository**,
+and the CI workflow in `.github/workflows/ci.yml` only runs on GitHub. A local repository is not
+enough, so before anything else:
+
+```bash
+git remote add origin https://github.com/<you>/<repo>.git
+git push -u origin main
+```
+
+Nothing secret is committed — `.env` files are ignored, and every secret in `render.yaml` is
+`sync: false` — so a private or public repository both work. A private repository is the safer
+default.
+
 ## How the pieces fit
 
 The frontend and API share an origin as far as the browser is concerned:
