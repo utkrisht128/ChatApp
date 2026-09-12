@@ -1,0 +1,66 @@
+# Render: the API and WebSocket server (apps/server). See DEPLOYMENT.md.
+#
+# Secrets and anything environment-specific use `sync: false`, which means "prompt me in the
+# dashboard, never store it in the repository". Only non-sensitive, always-the-same values are
+# committed here.
+services:
+  - type: web
+    name: chatapp-api
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+
+    # The monorepo builds from the root: npm ci installs every workspace, and build:server
+    # bundles @chat/shared into dist/index.js so the shared package needs no publish step.
+    buildCommand: npm ci && npm run build:server
+    startCommand: npm run start
+
+    # The server answers this before it has a database connection only if it started; it fails
+    # fast on a bad MONGODB_URI, and Render restarts it.
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Render terminates TLS at one proxy in front of the app. This is how the real client IP
+      # is derived, which the rate limiters depend on — getting it wrong lets one IP bypass them.
+      - key: TRUST_PROXY
+        value: "1"
+      - key: LOG_LEVEL
+        value: info
+      - key: SESSION_TTL_DAYS
+        value: "30"
+      # Uploads live in MongoDB GridFS. Atlas M0 gives 512MB in total, so keep these modest.
+      - key: MAX_UPLOAD_MB
+        value: "8"
+      - key: USER_STORAGE_QUOTA_MB
+        value: "100"
+
+      # ── Set these in the Render dashboard ──────────────────────────────────
+      # Atlas SRV connection string, including the database name.
+      - key: MONGODB_URI
+        sync: false
+      # The Netlify site origin, e.g. https://your-site.netlify.app — no trailing slash.
+      # Used for CORS, the CSRF origin check, and links in emails.
+      - key: CLIENT_URL
+        sync: false
+      # Optional: email. Without SMTP_URL, verification and password-reset emails are skipped
+      # (logged, not sent), so account verification and password recovery will not work.
+      - key: SMTP_URL
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      # Optional: Web Push. Generate with `npx web-push generate-vapid-keys`.
+      # VAPID_PUBLIC_KEY must match the frontend's VITE_VAPID_PUBLIC_KEY.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
+      # Optional: comma-separated emails granted the admin role on registration or next login.
+      - key: ADMIN_EMAILS
+        sync: false

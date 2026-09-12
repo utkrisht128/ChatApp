@@ -314,7 +314,7 @@ Each phase ends in a working, runnable state. Before every major change I'll pos
 | **6. Security review** | Full pass against §6 and an authorization test matrix (every route × non-member/non-owner/blocked/banned) | All authz tests green | ✅ `0f7cc0c` — see [SECURITY_REVIEW.md](SECURITY_REVIEW.md) |
 | **7. Performance** | Seed 100k messages / 500 chats; profile the list, queries (`EXPLAIN`) and bundle size; throttled-network tests | Chat opens in under 300ms on a warm cache; initial JS under ~200KB gzip | Done — 145ms / 199.6KB gz (`PERFORMANCE.md`) |
 | **8. Testing** | Vitest (server services + authz), Supertest (API), socket integration tests, Playwright (auth, messaging between two users, mobile viewport), manual checklist | CI green | Done — 163 server + 10 e2e, GitHub Actions (`TESTING.md`) |
-| **9. Deployment** | `netlify.toml`, `render.yaml`, `DEPLOYMENT.md` (every env var, GridFS/SMTP/VAPID setup, Netlify proxy + socket tickets) | Production deploy smoke-tested | Next |
+| **9. Deployment** | `netlify.toml`, `render.yaml`, `DEPLOYMENT.md` (every env var, GridFS/SMTP/VAPID setup, Netlify proxy + socket tickets) | Production deploy smoke-tested | Config ready and builds verified; **the deploy itself is still to be done** (`DEPLOYMENT.md`) |
 
 ---
 
