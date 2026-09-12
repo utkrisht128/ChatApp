@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/States";
 import { useChangePassword, useCurrentUser, useLogout, useLogoutEverywhere, useResendVerification } from "@/features/auth/api";
 import { useBlocked, useSetBlocked } from "@/features/moderation/api";
+import { usePush } from "@/features/notifications/api";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -372,8 +373,25 @@ export function NotificationSettings() {
   const { settings } = useCurrentUser();
   const n = settings.notifications;
   const update = useUpdateSettings();
+  const push = usePush();
+
+  const pushDescription = !push.supported
+    ? "This browser doesn't support push notifications."
+    : push.permission === "denied"
+      ? "Blocked in your browser settings for this site."
+      : "Get notified when the app is closed. Applies to this device only.";
+
   return (
     <SettingsPage title="Notifications">
+      <SettingsGroup title="This device" footer="Each device you sign in on has its own notification setting.">
+        <SwitchRow
+          label="Push notifications"
+          description={pushDescription}
+          checked={push.enabled}
+          disabled={!push.supported || push.busy || !push.ready || push.permission === "denied"}
+          onCheckedChange={(v) => void (v ? push.enable() : push.disable())}
+        />
+      </SettingsGroup>
       <SettingsGroup title="Notify me about">
         <SwitchRow label="Direct messages" checked={n.messages} onCheckedChange={(v) => update.mutate({ notifications: { messages: v } })} />
         <SwitchRow label="Group messages" checked={n.groups} onCheckedChange={(v) => update.mutate({ notifications: { groups: v } })} />

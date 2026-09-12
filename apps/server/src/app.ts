@@ -15,6 +15,7 @@ import { groupsRouter } from "./modules/groups/routes";
 import { chatMessagesRouter, messagesRouter } from "./modules/messages/routes";
 import { linksRouter } from "./modules/links/routes";
 import { reportsRouter } from "./modules/moderation/routes";
+import { pushRouter } from "./modules/push/routes";
 import { searchRouter } from "./modules/search/routes";
 import { usersRouter } from "./modules/users/routes";
 
@@ -58,6 +59,7 @@ export function createApp() {
   api.use("/search", requireAuth, searchRouter);
   api.use("/reports", requireAuth, reportsRouter);
   api.use("/links", requireAuth, linksRouter);
+  api.use("/push", requireAuth, pushRouter);
 
   app.use("/api", apiLimiter, csrfGuard, authenticate, api);
 

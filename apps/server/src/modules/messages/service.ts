@@ -26,6 +26,7 @@ import { storage } from "../../lib/storage";
 import { emitToUsers } from "../../realtime/bus";
 import { requireMembership } from "../chats/service";
 import { blockExists } from "../moderation/blocks";
+import { notifyNewMessageInBackground } from "../push/service";
 import { claimAttachments, deleteFilesUnusedBy, toAttachment } from "../files/service";
 
 type MessageLean = MessageFields & { _id: Types.ObjectId };
@@ -248,6 +249,8 @@ export async function sendMessage(senderId: Types.ObjectId, chatId: string, inpu
   const message = toMessage(doc.toObject() as MessageLean);
   emitToUsers(await activeMemberIds(conv._id), "message:new", { message });
   await broadcastReceipt(conv._id, senderId);
+  // Anyone without the app open gets a push instead; never blocks the send.
+  notifyNewMessageInBackground(doc._id);
   return { message, created: true };
 }
 

@@ -6,6 +6,7 @@ export * from "./LinkPreview";
 export * from "./Report";
 export * from "./Member";
 export * from "./Message";
+export * from "./PushSubscription";
 export * from "./Session";
 export * from "./Star";
 export * from "./User";
