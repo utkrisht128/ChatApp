@@ -97,7 +97,7 @@ Do **not** set `PORT` — Render provides it.
 | Variable | Value |
 |---|---|
 | `MONGODB_URI` | The Atlas string from step 1 |
-| `CLIENT_URL` | Your Netlify origin, e.g. `https://your-site.netlify.app` — **no trailing slash** |
+| `CLIENT_URL` | **Required — the server will not start without it.** Your Netlify origin, e.g. `https://your-site.netlify.app`, **no trailing slash**. Use a placeholder on the first deploy (see below) |
 | `SMTP_URL` | Optional — `smtps://user:pass@smtp.host:465` |
 | `MAIL_FROM` | Optional — `ChatApp <no-reply@yourdomain>` |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Optional — `npx web-push generate-vapid-keys` |
@@ -107,9 +107,22 @@ Do **not** set `PORT` — Render provides it.
 Everything else (`NODE_ENV`, `PORT`, `TRUST_PROXY`, log level, limits) is set by the blueprint or
 by Render itself. **Do not set `PORT`** — Render provides it.
 
-You do not have `CLIENT_URL` yet on the first pass. Deploy anyway, take the Render URL
-(`https://chatapp-api.onrender.com`), do step 3, then come back and set `CLIENT_URL` to the
-Netlify origin. The service restarts automatically.
+You do not know the Netlify origin yet on the first pass, but **`CLIENT_URL` cannot be left unset**:
+the server validates its environment at startup and exits with `CLIENT_URL is required`, which on
+Render shows up as a build that succeeds followed by a service that restarts forever.
+
+So set a placeholder now and correct it in step 4:
+
+```
+CLIENT_URL=https://placeholder.netlify.app
+```
+
+Then take the Render URL (`https://<your-service>.onrender.com`), do step 3, and come back and
+replace the placeholder with the real Netlify origin. The service redeploys automatically.
+
+Until it is correct, the API is running but will reject browser requests from the real frontend —
+`CLIENT_URL` is the CORS allowlist and the CSRF origin check, so this is the one value that must
+not stay a placeholder.
 
 ### Free-tier behaviour worth knowing
 The free instance **sleeps after 15 minutes of inactivity** and takes roughly 50 seconds to wake.
