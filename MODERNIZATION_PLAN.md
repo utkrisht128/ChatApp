@@ -16,13 +16,18 @@ Each architectural decision below follows the same structure: *what exists → w
 
 ## 1. Key Decisions
 
-### D1. Database: MongoDB → PostgreSQL *(needs your confirmation)*
+### D1. Database: PostgreSQL proposed — ❌ **declined; MongoDB kept**
 - **Exists:** MongoDB with 2 loosely typed collections.
 - **Wrong:** Chat data is inherently relational: users ↔ conversation members ↔ messages ↔ reactions/receipts. The requirements explicitly call for foreign keys, constraints and indexed pagination. Mongo can do this, but only with application-enforced integrity.
-- **Proposal:** PostgreSQL (Render Postgres), with **Prisma** as the ORM and migration tool.
-- **Why:** Real FKs and unique constraints (for example one reaction per user/emoji/message), transactional sends, cheap `unread count` queries, Postgres full-text search for message search without adding a search engine, and first-class hosting on Render.
-- **Risk:** A data migration is needed. It will be done with a one-off script that copies users (with bcrypt hashes unchanged) and turns each distinct `users` pair into a DM conversation with its message history.
-- **Alternative:** Keep MongoDB (Atlas) with the same logical model. It is viable, but integrity would live in application code. **I recommend Postgres.**
+- **Proposal (declined):** PostgreSQL (Render Postgres) with Prisma, for real FKs, transactional sends and built-in full-text search.
+- **Decision:** stay on **MongoDB Atlas M0** with Mongoose and the redesigned schema in §3a.
+- **How the trade-off was covered:** integrity lives in the service layer, backed by unique and
+  compound indexes — a unique `directKey` for one DM per pair, unique `(senderId, clientId)` for
+  idempotent sends, unique `(conversationId, userId)` per membership, and one reaction per person
+  enforced by a single atomic aggregation-pipeline update. Message search uses a MongoDB text
+  index, so no search engine was added either.
+- **Cost accepted:** no cross-document transactions, so a few multi-collection updates are ordered
+  to be safe when replayed rather than atomic.
 
 ### D2. Frontend build: CRA → Vite + TypeScript
 - CRA is deprecated and carries 70+ advisories. Vite is the standard replacement, deploys to Netlify trivially, and makes route-level code splitting simple.
@@ -31,8 +36,10 @@ Each architectural decision below follows the same structure: *what exists → w
 ### D3. Authentication: none → server sessions in httpOnly cookies
 - **Proposal:** Opaque random session tokens, stored **hashed** in a `sessions` table and sent as an `HttpOnly; Secure; SameSite=Lax` cookie. Sliding expiry is 30 days, and sessions can be revoked (logout, "log out of other devices").
 - **Why not JWT in localStorage:** it can be stolen by XSS and cannot be revoked. Opaque DB sessions are simpler and safer at this scale.
-- Passwords: **argon2id** for new hashes. Existing bcrypt hashes are verified with bcrypt and rehashed to argon2id on next login.
-- Email verification and password reset: single-use, hashed, expiring tokens delivered via **Resend** (or any SMTP provider).
+- Passwords: **argon2id** only (OWASP parameters). There was no existing data to carry over, so no
+  bcrypt verification path was built and bcrypt is not a dependency.
+- Email verification and password reset: single-use, hashed, expiring tokens delivered over **SMTP
+  via nodemailer**. With no SMTP configured in development, links are printed to the console.
 - Google OAuth: **deferred.** It adds operational surface without improving core UX. It can be added later without schema changes (`accounts` table).
 
 ### D4. Netlify ↔ Render topology (cookies + WebSockets)
@@ -40,10 +47,12 @@ Netlify and Render sit on different sites, and browsers increasingly block third
 
 | Setup | REST | WebSocket | Needs |
 |---|---|---|---|
-| **A (recommended)** — custom domain | `api.yourdomain.com` (same-site → `SameSite=Lax` cookie works) | `api.yourdomain.com` | A domain you own |
-| **B** — no custom domain | Netlify proxy: `/api/*` → Render (first-party cookie) | Direct to `*.onrender.com`, authenticated with a **short-lived, single-use socket ticket** fetched over the proxied REST call | Nothing extra |
+| **A** — custom domain | `api.yourdomain.com` (same-site → `SameSite=Lax` cookie works) | `api.yourdomain.com` | A domain you own |
+| ✅ **B (in use)** — no custom domain | Netlify proxy: `/api/*` → Render (first-party cookie) | Direct to `*.onrender.com`, authenticated with a **short-lived, single-use socket ticket** fetched over the proxied REST call | Nothing extra |
 
-Netlify rewrites cannot proxy WebSocket upgrades, which is why B uses tickets. The code will support **both** setups, selected by env vars.
+Netlify rewrites cannot proxy WebSocket upgrades, which is why B uses tickets. **Setup B is what
+runs**, chosen because there is no custom domain; the code supports both, selected by env vars, so
+moving to A later is a configuration change rather than a code change.
 
 ### D5. Real-time: keep Socket.IO, redesign the protocol
 - Socket.IO is already in use, handles reconnection and fallbacks, and works on Render, so there is no reason to switch.
@@ -294,18 +303,18 @@ All events are validated with zod and rate-limited per socket. Membership is re-
 
 Each phase ends in a working, runnable state. Before every major change I'll post the *exists → wrong → proposal → why → files → risks → preservation* summary, as you asked.
 
-| Phase | Deliverables | Exit criteria |
-|---|---|---|
-| **0. Scaffold** | `git init`, workspaces, `apps/web` (Vite+TS+Tailwind), `apps/server` (Express 5+TS+Prisma), `packages/shared`, lint/format, `.env.example`, `.gitignore` for `.env*` | Both apps boot; `/health` returns OK |
-| **1. Auth + data model** | Prisma schema and migrations, sessions, register/login/logout/me, email verification, password reset, rate limits, error envelope, Mongo migration script | Old users can log in with their existing passwords |
-| **2. UI foundation** | Tokens, light/dark/system theme, primitives, responsive AppShell, auth pages, chat list, empty conversation, skeletons, toasts, error boundary | Layout verified at 360, 390, 430, 768, 1024, 1440 and 1920px |
-| **3. Core messaging** | DMs, send (optimistic + idempotent), paginated virtualized history, authenticated sockets, presence, typing, delivered/read, reply/edit/delete/react, date separators, unread counts, connection banner | Two browsers chat in real time; reconnection recovers missed messages |
-| **4. Advanced** | Groups + permissions, media/files with progress/retry, voice messages, forward/pin/star/copy, link previews, mentions, search (global + in-chat navigation), profiles, settings/privacy, mute/pin/archive, blocking/reporting, notifications + Web Push, PWA | Feature checklist passes on mobile and desktop |
-| **5. Admin** | Role-gated admin area: users, ban/unban, reports queue, content removal, basic stats | Non-admins get 403 at the API, not just hidden UI |
-| **6. Security review** | Full pass against §6 and an authorization test matrix (every route × non-member/non-owner/blocked/banned) | All authz tests green |
-| **7. Performance** | Seed 100k messages / 500 chats; profile the list, queries (`EXPLAIN`) and bundle size; throttled-network tests | Chat opens in under 300ms on a warm cache; initial JS under ~200KB gzip |
-| **8. Testing** | Vitest (server services + authz), Supertest (API), socket integration tests, Playwright (auth, messaging between two users, mobile viewport), manual checklist | CI green |
-| **9. Deployment** | `netlify.toml`, `render.yaml`, `DEPLOYMENT.md` (every env var, R2/Resend/VAPID setup, domain setup A vs B, Mongo→PG migration run) | Production deploy smoke-tested |
+| Phase | Deliverables | Exit criteria | Status |
+|---|---|---|---|
+| **0. Scaffold** | `git init`, workspaces, `apps/web` (Vite+TS+Tailwind), `apps/server` (Express 5+TS+Mongoose), `packages/shared`, `.env.example`, `.gitignore` for `.env*` | Both apps boot; `/health` returns OK | ✅ `3eda53a` |
+| **1. Auth + data model** | Mongoose models and indexes, opaque hashed sessions, register/login/logout/me, email verification, password reset, rate limits, error envelope | Every route rejects an unauthenticated caller; no password material ever leaves the server | ✅ `3eda53a` |
+| **2. UI foundation** | Tokens, light/dark/system theme, primitives, responsive AppShell, auth pages, chat list, empty conversation, skeletons, toasts, error boundary | Layout verified at 360, 390, 430, 768, 1024, 1440 and 1920px | ✅ `528758a` |
+| **3. Core messaging** | DMs, send (optimistic + idempotent), paginated bottom-anchored history, authenticated sockets, presence, typing, delivered/read, reply/edit/delete/react, date separators, unread counts, connection banner | Two browsers chat in real time; reconnection recovers missed messages | ✅ `3489e81` |
+| **4. Advanced** | Groups + permissions; media/files with progress/retry; voice messages; forward/pin/star/copy; link previews; mentions; search (global + in-chat); profiles; settings/privacy; mute/pin/archive; blocking/reporting; Web Push; PWA | Feature checklist passes on mobile and desktop | ✅ 4a `a96ae1c`, 4b `4fd2982`, 4c `4e0bc37` `40f5bd5` `4f679f3` |
+| **5. Admin** | Role-gated admin area: users, ban/unban, reports queue (fed by phase 4c), content removal, basic stats | Non-admins get 404 at the API, not just hidden UI | Next |
+| **6. Security review** | Full pass against §6 and an authorization test matrix (every route × non-member/non-owner/blocked/banned) | All authz tests green | |
+| **7. Performance** | Seed 100k messages / 500 chats; profile the list, queries (`EXPLAIN`) and bundle size; throttled-network tests | Chat opens in under 300ms on a warm cache; initial JS under ~200KB gzip | |
+| **8. Testing** | Vitest (server services + authz), Supertest (API), socket integration tests, Playwright (auth, messaging between two users, mobile viewport), manual checklist | CI green | |
+| **9. Deployment** | `netlify.toml`, `render.yaml`, `DEPLOYMENT.md` (every env var, GridFS/SMTP/VAPID setup, Netlify proxy + socket tickets) | Production deploy smoke-tested | |
 
 ---
 
@@ -320,23 +329,32 @@ Each phase ends in a working, runnable state. Before every major change I'll pos
 | ~~@tanstack/react-virtual~~ | Dropped in Phase 3: native `column-reverse` + `content-visibility` instead (see §5) |
 | zustand | Tiny client-state store |
 | zod | Validation shared between client and server |
-| prisma / @prisma/client | Schema, migrations and typed queries |
+| mongoose | Schema, indexes and typed queries (MongoDB kept — see §9) |
 | helmet, express-rate-limit, cookie-parser | Security baseline |
 | argon2 (keep bcrypt for legacy verify) | Password hashing |
 | pino | Structured, redacting logs |
-| @aws-sdk/client-s3 + s3-request-presigner | R2 storage |
-| resend (or nodemailer) | Verification/reset email |
+| ~~@aws-sdk/client-s3~~ | Dropped: files live in GridFS behind a `StorageDriver` interface, so S3/R2 can be swapped in later without touching callers |
+| nodemailer | Verification/reset email over SMTP |
 | web-push | Browser push notifications |
 | vitest, supertest, playwright | Tests |
 
-**Removed:** react-scripts, styled-components, axios (replaced by a small `fetch` wrapper), uuid (`crypto.randomUUID`), buffer, web-vitals, nodemon (replaced by `tsx watch` in dev), mongoose (after migration).
+**Removed:** react-scripts, styled-components, axios (replaced by a small `fetch` wrapper), uuid (`crypto.randomUUID`), buffer, web-vitals, nodemon (replaced by `tsx watch` in dev).
 
 ---
 
-## 9. Decisions Needed From You
+## 9. Decisions — Answered
 
-1. **Database:** PostgreSQL (recommended) or stay on MongoDB?
-2. **Domain:** Do you have a custom domain (setup A), or should I plan for Netlify + `onrender.com` only (setup B)? Both will work.
-3. **Existing data:** Is there production data to migrate, or is the local Mongo DB throwaway?
-4. **Third-party accounts:** OK to use Cloudflare R2 (files) and Resend (email)? Both have free tiers.
-5. **Render plan:** The free tier sleeps after about 15 minutes idle (roughly 30–50s cold start) and free Postgres expires after 30 days. For a real deployment, the starter paid plans are advisable.
+All five were settled on 2026-09-11; the block at the top of this document is the
+authoritative record, and the rest of the plan has been reconciled with it.
+
+1. **Database:** stay on **MongoDB** (Atlas M0). The PostgreSQL proposal in §D1 was declined.
+2. **Domain:** no custom domain — **setup B**: Netlify proxies `/api/*` to Render so the session
+   cookie stays first-party, and the WebSocket connects straight to Render using a short-lived
+   single-use ticket.
+3. **Existing data:** none to migrate; the local Mongo database is throwaway. No migration script
+   was written, and there is no legacy-password compatibility path.
+4. **Third-party accounts:** no Cloudflare R2 and no Resend. Files go to **GridFS** behind a
+   `StorageDriver` interface; email goes over **SMTP via nodemailer**.
+5. **Render plan:** staying on the **free tier**, which sleeps after ~15 minutes idle. The API
+   client allows a generous first-request timeout and the UI explains the wake-up delay rather
+   than showing a bare error.
