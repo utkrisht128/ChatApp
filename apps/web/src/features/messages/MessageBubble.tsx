@@ -1,5 +1,5 @@
 import { memo, useRef, useState, type PointerEvent } from "react";
-import { Ban, Check, CheckCheck, CircleAlert, Clock3, Copy, CornerUpLeft, MoreHorizontal, Pencil, RotateCw, Trash2 } from "lucide-react";
+import { Ban, Check, CheckCheck, CircleAlert, Clock3, Copy, CornerUpLeft, Forward, MoreHorizontal, Pencil, Pin, PinOff, RotateCw, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { EDIT_WINDOW_MS, type Message } from "@chat/shared";
 import { ActionDropdown, ActionMenu, type Action } from "@/components/ui/ActionMenu";
@@ -11,7 +11,7 @@ import { cn } from "@/lib/cn";
 import { formatClock } from "@/lib/format";
 import type { PendingMessage } from "@/stores/outbox";
 import { AttachmentsView } from "./Attachments";
-import { Linkify } from "./Linkify";
+import { RichText, type MentionLookup } from "./RichText";
 import { QuickReactions, ReactionChips, ReactionPopover } from "./Reactions";
 import type { DeliveryStatus } from "./status";
 
@@ -82,7 +82,12 @@ export type BubbleProps = {
   meId: string;
   focusable: boolean;
   highlighted: boolean;
+  starred?: boolean;
+  pinned?: boolean;
+  /** Whether this viewer may pin in this chat (admins only, in most groups). */
+  canPin?: boolean;
   nameOf: (userId: string) => string;
+  mentionOf?: MentionLookup;
   onReply: (m: Message) => void;
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
@@ -90,10 +95,13 @@ export type BubbleProps = {
   onJumpTo: (messageId: string) => void;
   onRetry: (p: PendingMessage) => void;
   onDiscard: (p: PendingMessage) => void;
+  onForward: (m: Message) => void;
+  onPin: (m: Message, pinned: boolean) => void;
+  onStar: (m: Message, starred: boolean) => void;
 };
 
 export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
-  const { message: m, pending, mine, first, last, status, meId, nameOf, highlighted, sender } = props;
+  const { message: m, pending, mine, first, last, status, meId, nameOf, highlighted, sender, starred, pinned } = props;
   const touch = useIsTouch();
   const theme = useResolvedTheme();
   const isMedia = (a: { kind: string }) => a.kind === "image" || a.kind === "video";
@@ -114,6 +122,15 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
       icon: Copy,
       hidden: deleted || !m.body,
       onSelect: () => navigator.clipboard.writeText(m.body).then(() => toast.success("Copied"), () => toast.error("Couldn't copy")),
+    },
+    { id: "forward", label: "Forward", icon: Forward, onSelect: () => props.onForward(m), hidden: !interactive },
+    { id: "star", label: starred ? "Remove star" : "Star", icon: Star, onSelect: () => props.onStar(m, !starred), hidden: !interactive },
+    {
+      id: "pin",
+      label: pinned ? "Unpin" : "Pin",
+      icon: pinned ? PinOff : Pin,
+      onSelect: () => props.onPin(m, !pinned),
+      hidden: !interactive || !props.canPin,
     },
     { id: "edit", label: "Edit", icon: Pencil, onSelect: () => props.onEdit(m), hidden: !editable },
     { id: "retry", label: "Retry sending", icon: RotateCw, onSelect: () => pending && props.onRetry(pending), hidden: pending?.status !== "failed" },
@@ -161,6 +178,11 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
                 {sender.name}
               </p>
             )}
+            {m.forwarded && !deleted && (
+              <p className={cn("flex items-center gap-1 text-xs italic opacity-70", hasMedia && "px-2 pt-1")}>
+                <Forward className="size-3.5" aria-hidden /> Forwarded
+              </p>
+            )}
             {m.replyTo && (
               <button
                 onClick={() => props.onJumpTo(m.replyTo!.id)}
@@ -188,10 +210,22 @@ export const MessageBubble = memo(function MessageBubble(props: BubbleProps) {
                   </p>
                 ) : m.body ? (
                   <p className="min-w-0 flex-auto py-0.5 text-[15px] leading-snug break-words whitespace-pre-wrap [overflow-wrap:anywhere]">
-                    <Linkify text={m.body} linkClassName={cn("underline underline-offset-2", mine ? "text-white" : "text-accent")} />
+                    <RichText text={m.body} mine={mine} mentionOf={props.mentionOf} />
                   </p>
                 ) : null}
                 <span className={cn("ml-auto flex shrink-0 translate-y-0.5 items-center gap-1 text-[11px] leading-5", mine ? "text-bubble-out-muted" : "text-bubble-in-muted")}>
+                  {pinned && (
+                    <>
+                      <Pin className="size-3" aria-hidden />
+                      <span className="sr-only">Pinned</span>
+                    </>
+                  )}
+                  {starred && (
+                    <>
+                      <Star className="size-3 fill-current" aria-hidden />
+                      <span className="sr-only">Starred</span>
+                    </>
+                  )}
                   {m.editedAt && !deleted && <span>edited</span>}
                   <time dateTime={m.createdAt}>{time}</time>
                   {mine && status && <StatusIcon status={status} />}

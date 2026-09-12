@@ -115,6 +115,20 @@ export async function listChats(userId: Id, opts: { archived: boolean; cursor?: 
   };
 }
 
+/**
+ * Chats the user is in whose name (or the other person's name/username) matches. Searching
+ * only ever looks at the caller's own memberships, so it can't reveal a chat they aren't in.
+ */
+export async function searchChats(userId: Id, query: string): Promise<ChatSummary[]> {
+  const members = await Member.find({ userId, hidden: false, leftAt: null })
+    .sort({ lastMessageAt: -1 })
+    .limit(300)
+    .lean<MemberLean[]>();
+  const summaries = await buildSummaries(userId, members);
+  const q = query.trim().toLowerCase().replace(/^@/, "");
+  return summaries.filter((c) => c.name.toLowerCase().includes(q) || c.peer?.username.includes(q)).slice(0, 25);
+}
+
 export async function getChat(userId: Id, chatId: string) {
   const member = await requireMembership(chatId, userId);
   const [summary] = await buildSummaries(userId, [member.toObject() as MemberLean]);

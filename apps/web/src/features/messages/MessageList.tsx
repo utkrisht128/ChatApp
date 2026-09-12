@@ -10,8 +10,9 @@ import { Spinner } from "@/components/ui/Spinner";
 import { ErrorState } from "@/components/ui/States";
 import { cn } from "@/lib/cn";
 import { useOutbox, type PendingMessage } from "@/stores/outbox";
-import { deliver, discardPending, flattenMessages, markChatRead, useMessages, useReact, useReceipts } from "./api";
+import { deliver, discardPending, flattenMessages, markChatRead, useMessages, usePinned, useReact, useReceipts, useSetPinned, useSetStarred, useStarredIds } from "./api";
 import { MessageBubble } from "./MessageBubble";
+import type { MentionLookup } from "./RichText";
 import { buildRows } from "./rows";
 import { statusOf } from "./status";
 
@@ -23,9 +24,15 @@ type Props = {
   nameOf: (userId: string) => string;
   /** Group chats show each sender's name and avatar. */
   personOf: (userId: string) => Person;
+  mentionOf: MentionLookup;
+  /** Whether this viewer may pin in this chat (the server enforces it too). */
+  canPin: boolean;
+  /** Set by the pinned bar and by search results to scroll to a particular message. */
+  jumpTarget: { id: string; nonce: number } | null;
   onReply: (m: Message) => void;
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
+  onForward: (m: Message) => void;
 };
 
 function SystemRow({ message, meId, nameOf }: { message: Message; meId: string; nameOf: (id: string) => string }) {
@@ -60,13 +67,18 @@ function ListSkeleton() {
   );
 }
 
-export function MessageList({ chat, meId, nameOf, personOf, onReply, onEdit, onDelete }: Props) {
+export function MessageList({ chat, meId, nameOf, personOf, mentionOf, canPin, jumpTarget, onReply, onEdit, onDelete, onForward }: Props) {
   const isGroup = chat.type === "group";
   const qc = useQueryClient();
   const query = useMessages(chat.id);
   const receipts = useReceipts(chat.id);
   const pending = useOutbox(useShallow((s) => s.items.filter((p) => p.chatId === chat.id)));
   const react = useReact(meId);
+  const starredIds = useStarredIds();
+  const pinnedQuery = usePinned(chat.id);
+  const pinnedIds = useMemo(() => new Set((pinnedQuery.data ?? []).map((m) => m.id)), [pinnedQuery.data]);
+  const setPinned = useSetPinned(chat.id);
+  const setStarred = useSetStarred();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -174,7 +186,15 @@ export function MessageList({ chat, meId, nameOf, personOf, onReply, onEdit, onD
     setTimeout(() => setHighlighted((h) => (h === id ? null : h)), 1600);
   }, []);
 
+  // The pinned bar and search results ask for a particular message; the nonce makes
+  // asking for the same one twice still scroll to it.
+  useEffect(() => {
+    if (jumpTarget) jumpTo(jumpTarget.id);
+  }, [jumpTarget, jumpTo]);
+
   const onReact = useCallback((m: Message, emoji: string | null) => react.mutate({ message: m, emoji }), [react]);
+  const onPin = useCallback((m: Message, pinned: boolean) => setPinned.mutate({ message: m, pinned }), [setPinned]);
+  const onStar = useCallback((m: Message, starred: boolean) => setStarred.mutate({ message: m, starred }), [setStarred]);
   const onRetry = useCallback((p: PendingMessage) => void deliver(qc, p), [qc]);
   const onDiscard = useCallback((p: PendingMessage) => discardPending(p.clientId), []);
 
@@ -246,7 +266,11 @@ export function MessageList({ chat, meId, nameOf, personOf, onReply, onEdit, onD
                   meId={meId}
                   focusable={row.key === lastMessageKey}
                   highlighted={highlighted === m.id}
+                  starred={starredIds.has(m.id)}
+                  pinned={pinnedIds.has(m.id)}
+                  canPin={canPin}
                   nameOf={nameOf}
+                  mentionOf={mentionOf}
                   onReply={onReply}
                   onEdit={onEdit}
                   onDelete={onDelete}
@@ -254,6 +278,9 @@ export function MessageList({ chat, meId, nameOf, personOf, onReply, onEdit, onD
                   onJumpTo={jumpTo}
                   onRetry={onRetry}
                   onDiscard={onDiscard}
+                  onForward={onForward}
+                  onPin={onPin}
+                  onStar={onStar}
                 />
               </div>
             );

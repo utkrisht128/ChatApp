@@ -43,6 +43,48 @@ export function summarizeMessage(m: { body: string; attachments: { kind: FileKin
   return text ? `${attachmentIcon(first.kind)} ${text}` : attachmentLabel(m.attachments);
 }
 
+/**
+ * `@username` in a message body. The leading boundary stops an email address ("a@bob")
+ * reading as a mention. Anything that doesn't resolve to a real member of the chat is
+ * ignored by the server, so a mention can't be faked from the client.
+ */
+const MENTION_RE = /(?:^|[^\w@])@([a-zA-Z0-9_]{3,24})/g;
+
+export function parseMentions(body: string): string[] {
+  return [...new Set([...body.matchAll(MENTION_RE)].map((m) => m[1]!.toLowerCase()))].slice(0, 50);
+}
+
+/** Splits a body into [text, mentionedUsername | null] pairs for rendering. */
+export function mentionParts(body: string): [string, string | null][] {
+  const parts: [string, string | null][] = [];
+  let at = 0;
+  for (const m of body.matchAll(MENTION_RE)) {
+    const start = m.index + m[0].length - m[1]!.length - 1; // position of the "@"
+    if (start > at) parts.push([body.slice(at, start), null]);
+    parts.push([body.slice(start, start + m[1]!.length + 1), m[1]!.toLowerCase()]);
+    at = start + m[1]!.length + 1;
+  }
+  if (at < body.length) parts.push([body.slice(at), null]);
+  return parts;
+}
+
+export const MAX_PINNED_MESSAGES = 10;
+/** Cap on one person's starred list, so it stays a single cheap query. */
+export const MAX_STARRED = 500;
+export const MAX_FORWARD_TARGETS = 10;
+
+export const forwardMessageSchema = z.strictObject({
+  /** One clientId per target chat, so a retried forward doesn't duplicate. */
+  targets: z
+    .array(z.strictObject({ chatId: objectIdSchema, clientId: clientIdSchema }))
+    .min(1, "Pick at least one chat")
+    .max(MAX_FORWARD_TARGETS),
+});
+export type ForwardMessageInput = z.infer<typeof forwardMessageSchema>;
+
+export const setPinnedSchema = z.strictObject({ pinned: z.boolean() });
+export const setStarredSchema = z.strictObject({ starred: z.boolean() });
+
 export const editMessageSchema = z.strictObject({ body: bodySchema });
 
 export const reactionSchema = z.strictObject({

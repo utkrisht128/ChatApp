@@ -17,10 +17,13 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ApiError } from "@/lib/api";
 import { useTypingUsers } from "@/stores/typing";
 import { useUi } from "@/stores/ui";
+import type { MentionLookup } from "@/features/messages/RichText";
 import { toLocalFiles, type LocalFile } from "./AttachmentTray";
 import { ChatDetails } from "./ChatDetails";
 import { Composer } from "./Composer";
 import { ConversationHeader } from "./ConversationHeader";
+import { ForwardDialog } from "./ForwardDialog";
+import { PinnedBar } from "./PinnedBar";
 
 export default function ConversationPage() {
   const { chatId = "" } = useParams();
@@ -63,6 +66,9 @@ function Conversation({ chat }: { chat: ChatSummary }) {
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
+  const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [jumpTarget, setJumpTarget] = useState<{ id: string; nonce: number } | null>(null);
+  const jumpTo = useCallback((id: string) => setJumpTarget({ id, nonce: Date.now() }), []);
   const [files, setFiles] = useState<LocalFile[]>([]);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -89,6 +95,26 @@ function Conversation({ chat }: { chat: ChatSummary }) {
   }, [group.data, chat.peer, me.id, me.avatarUrl]);
   const personOf = useCallback((id: string): Person => people.get(id) ?? { name: isGroup ? "Former member" : "Deleted account", avatarUrl: null }, [people, isGroup]);
   const nameOf = useCallback((id: string) => personOf(id).name, [personOf]);
+
+  /** Everyone who can be mentioned here, by username — the same set the server will accept. */
+  const mentionable = useMemo(() => {
+    const list = [
+      ...(group.data?.members ?? []).filter((m) => m.active).map((m) => m.user),
+      ...(chat.peer ? [chat.peer] : []),
+    ];
+    return list.filter((u) => u.id !== me.id);
+  }, [group.data, chat.peer, me.id]);
+
+  const byUsername = useMemo(() => {
+    const map = new Map<string, { id: string; isMe: boolean }>();
+    for (const u of mentionable) map.set(u.username.toLowerCase(), { id: u.id, isMe: false });
+    map.set(me.username.toLowerCase(), { id: me.id, isMe: true });
+    return map;
+  }, [mentionable, me.id, me.username]);
+  const mentionOf = useCallback<MentionLookup>((username) => byUsername.get(username) ?? null, [byUsername]);
+
+  // Mirrors the server rule; the server still enforces it.
+  const canPin = !isGroup || chat.role !== "member" || group.data?.permissions.editInfo === "all";
 
   const typingUsers = useTypingUsers(chat.id);
   const typingText = !typingUsers.length
@@ -152,11 +178,25 @@ function Conversation({ chat }: { chat: ChatSummary }) {
           </div>
         )}
         <ConversationHeader chat={chat} subtitle={typingText} />
-        <MessageList chat={chat} meId={me.id} nameOf={nameOf} personOf={personOf} onReply={onReply} onEdit={onEdit} onDelete={setDeleting} />
+        <PinnedBar chat={chat} onJumpTo={jumpTo} />
+        <MessageList
+          chat={chat}
+          meId={me.id}
+          nameOf={nameOf}
+          personOf={personOf}
+          mentionOf={mentionOf}
+          canPin={canPin}
+          jumpTarget={jumpTarget}
+          onReply={onReply}
+          onEdit={onEdit}
+          onDelete={setDeleting}
+          onForward={setForwarding}
+        />
         <Composer
           chatId={chat.id}
           disabledReason={canSend ? undefined : "Only admins can send messages in this group."}
           nameOf={nameOf}
+          mentionable={isGroup ? mentionable : []}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
           editing={editing}
@@ -191,6 +231,8 @@ function Conversation({ chat }: { chat: ChatSummary }) {
           <ChatDetails chat={chat} />
         </SidePanel>
       )}
+
+      <ForwardDialog message={forwarding} onClose={() => setForwarding(null)} />
 
       <DeleteMessageDialog
         message={deleting}

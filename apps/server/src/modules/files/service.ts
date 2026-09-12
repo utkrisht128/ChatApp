@@ -73,11 +73,23 @@ export async function cancelUpload(userId: Id, fileId: string) {
 }
 
 /**
+ * Every live message that still shows this file. Forwarding reuses the stored file rather
+ * than copying it, so one file can appear in several messages across several chats.
+ */
+function messagesUsing(fileId: Types.ObjectId) {
+  return Message.find({ $or: [{ "attachments.fileId": fileId }, { "attachments.thumbFileId": fileId }], deletedAt: null })
+    .select("conversationId createdAt hiddenFor")
+    .limit(50)
+    .lean();
+}
+
+/**
  * Who may download a file:
  *  - profile / group photos: any signed-in user
  *  - not yet sent: only the uploader
- *  - attachments: current members of the chat who can see the message (not deleted, not
- *    hidden for them, and — in groups — sent after they joined)
+ *  - attachments: anyone who can see at least one message carrying the file — a current
+ *    member of that chat, where the message isn't deleted or hidden for them and, in
+ *    groups, was sent after they joined
  * Everyone else gets 404, so file ids can't be probed.
  */
 export async function authorizeDownload(userId: Id, fileId: string): Promise<StoredFile> {
@@ -93,14 +105,43 @@ export async function authorizeDownload(userId: Id, fileId: string): Promise<Sto
     if (sameId(m.ownerId, userId)) return f;
     throw fileNotFound();
   }
-  const [member, msg, conv] = await Promise.all([
-    Member.findOne({ conversationId: m.chatId, userId, leftAt: null }).select("joinedAt").lean(),
-    Message.findById(m.messageId).select("createdAt deletedAt hiddenFor").lean(),
-    Conversation.findById(m.chatId).select("type").lean(),
+
+  const uses = await messagesUsing(f.id);
+  if (!uses.length) throw fileNotFound();
+  const convIds = [...new Set(uses.map((u) => String(u.conversationId)))];
+  const [members, convs] = await Promise.all([
+    Member.find({ conversationId: { $in: convIds }, userId, leftAt: null }).select("conversationId joinedAt").lean(),
+    Conversation.find({ _id: { $in: convIds } }).select("type").lean(),
   ]);
-  if (!member || !msg || !conv || msg.deletedAt || msg.hiddenFor.some((id) => sameId(id, userId))) throw fileNotFound();
-  if (conv.type === "group" && msg.createdAt < member.joinedAt) throw fileNotFound();
+  const memberOf = new Map(members.map((x) => [String(x.conversationId), x]));
+  const typeOf = new Map(convs.map((c) => [String(c._id), c.type]));
+
+  const allowed = uses.some((u) => {
+    if (u.hiddenFor.some((id) => sameId(id, userId))) return false;
+    const member = memberOf.get(String(u.conversationId));
+    if (!member) return false;
+    return !(typeOf.get(String(u.conversationId)) === "group" && u.createdAt < member.joinedAt);
+  });
+  if (!allowed) throw fileNotFound();
   return f;
+}
+
+/**
+ * Deletes a message's files, keeping any that a forward of it still shows. Called instead
+ * of `deleteFiles` when a message goes away, so deleting the original never breaks a copy.
+ */
+export async function deleteFilesUnusedBy(messageId: Types.ObjectId, ids: (Types.ObjectId | null | undefined)[]) {
+  const orphans = [];
+  for (const id of ids) {
+    if (!id) continue;
+    const stillUsed = await Message.exists({
+      _id: { $ne: messageId },
+      deletedAt: null,
+      $or: [{ "attachments.fileId": id }, { "attachments.thumbFileId": id }],
+    });
+    if (!stillUsed) orphans.push(id);
+  }
+  await deleteFiles(orphans);
 }
 
 /**

@@ -74,6 +74,13 @@ const messageSchema = new Schema(
 messageSchema.index({ conversationId: 1, _id: -1 });
 // Idempotent sends: a retried request with the same clientId maps to the same message.
 messageSchema.index({ senderId: 1, clientId: 1 }, { unique: true });
+// Message search. Only one text index is allowed per collection, and it can't be
+// prefixed by conversationId (a $in isn't an equality match), so the chat filter is
+// applied alongside it rather than as an index prefix.
+messageSchema.index({ body: "text" });
+// A file may be referenced by the message it was sent in *and* by any forward of it,
+// so downloads and deletions both have to look a file up across messages.
+messageSchema.index({ "attachments.fileId": 1 });
 
 export type MessageFields = InferSchemaType<typeof messageSchema> & { createdAt: Date };
 export type MessageDoc = HydratedDocument<MessageFields>;

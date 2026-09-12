@@ -4,4 +4,5 @@ export * from "./Conversation";
 export * from "./Member";
 export * from "./Message";
 export * from "./Session";
+export * from "./Star";
 export * from "./User";

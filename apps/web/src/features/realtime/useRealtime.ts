@@ -62,6 +62,8 @@ export function useRealtime(meId: string) {
       void qc.invalidateQueries({ queryKey: groupKey(chatId) });
       void qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
       void qc.invalidateQueries({ queryKey: chatKeys.lists });
+      // Pinning and unpinning are announced the same way.
+      void qc.invalidateQueries({ queryKey: messageKeys.pinned(chatId) });
     });
     socket.on("chat:read", ({ chatId, unreadCount }) =>
       patchChatInCache(qc, chatId, (c) => ({ ...c, unreadCount, mentionCount: unreadCount ? c.mentionCount : 0 })),

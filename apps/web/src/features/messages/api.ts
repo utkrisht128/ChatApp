@@ -1,8 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { DEFAULT_MAX_UPLOAD_BYTES, summarizeMessage, type FileKind, type Message, type MessagePage, type Receipt } from "@chat/shared";
-import { patchChatInCache } from "@/features/chats/api";
+import { chatKeys, patchChatInCache } from "@/features/chats/api";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { mediaDuration, prepareImage, prepareVideo } from "@/lib/media";
 import { uploadBlob } from "@/lib/upload";
@@ -227,6 +227,82 @@ export function useReact(meId: string) {
     onSuccess: (message) => replaceMessage(qc, message),
     onError: (err, _vars, ctx) => {
       if (ctx?.previous) replaceMessage(qc, ctx.previous);
+      toast.error(errorMessage(err));
+    },
+  });
+}
+
+/* ── Forwarding, pinning, starring ──────────────────────────────────────── */
+
+export function useForward() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ message, chatIds }: { message: Message; chatIds: string[] }) =>
+      api<{ messages: Message[] }>(`/messages/${message.id}/forward`, {
+        method: "POST",
+        // One clientId per target, so a retry can't send the same forward twice.
+        body: { targets: chatIds.map((chatId) => ({ chatId, clientId: crypto.randomUUID() })) },
+      }).then((r) => r.messages),
+    onSuccess: (sent) => {
+      for (const m of sent) upsertMessage(qc, m);
+      void qc.invalidateQueries({ queryKey: chatKeys.lists });
+      toast.success(sent.length > 1 ? `Forwarded to ${sent.length} chats` : "Forwarded");
+    },
+    onError: (err) => toast.error("Couldn't forward", { description: errorMessage(err) }),
+  });
+}
+
+/** The chat's pinned messages (shared by everyone in it). */
+export const usePinned = (chatId: string) =>
+  useQuery({
+    queryKey: messageKeys.pinned(chatId),
+    queryFn: ({ signal }) => api<{ messages: Message[] }>(`/chats/${chatId}/pinned`, { signal }).then((r) => r.messages),
+    staleTime: 60_000,
+  });
+
+export function useSetPinned(chatId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ message, pinned }: { message: Message; pinned: boolean }) =>
+      api<{ messages: Message[] }>(`/messages/${message.id}/pinned`, { method: "PUT", body: { pinned } }).then((r) => r.messages),
+    onSuccess: (messages, { pinned }) => {
+      qc.setQueryData(messageKeys.pinned(chatId), messages);
+      toast.success(pinned ? "Pinned" : "Unpinned");
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+
+/** Everything you starred, newest first. Private to you. */
+export const useStarred = (enabled = true) =>
+  useQuery({
+    queryKey: messageKeys.starred,
+    queryFn: ({ signal }) => api<{ messages: Message[] }>("/messages/starred", { signal }).then((r) => r.messages),
+    enabled,
+    staleTime: 30_000,
+  });
+
+/** Ids of your starred messages, for the star marker on a bubble. */
+export function useStarredIds() {
+  const { data } = useStarred();
+  return useMemo(() => new Set((data ?? []).map((m) => m.id)), [data]);
+}
+
+export function useSetStarred() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ message, starred }: { message: Message; starred: boolean }) =>
+      api<void>(`/messages/${message.id}/starred`, { method: "PUT", body: { starred } }),
+    onMutate: ({ message, starred }) => {
+      const previous = qc.getQueryData<Message[]>(messageKeys.starred);
+      qc.setQueryData<Message[]>(messageKeys.starred, (old = []) =>
+        starred ? [message, ...old.filter((m) => m.id !== message.id)] : old.filter((m) => m.id !== message.id),
+      );
+      return { previous };
+    },
+    onSuccess: (_r, { starred }) => toast.success(starred ? "Starred" : "Removed from starred"),
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(messageKeys.starred, ctx.previous);
       toast.error(errorMessage(err));
     },
   });

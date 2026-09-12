@@ -5,3 +5,4 @@ export * from "./files";
 export * from "./groups";
 export * from "./messages";
 export * from "./models";
+export * from "./search";

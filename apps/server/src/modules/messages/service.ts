@@ -1,9 +1,13 @@
 import { Types } from "mongoose";
 import {
   EDIT_WINDOW_MS,
+  MAX_PINNED_MESSAGES,
+  MAX_STARRED,
   messagePreview,
+  parseMentions,
   summarizeMessage,
   type FileKind,
+  type ForwardMessageInput,
   type Message as MessageDTO,
   type MessagePage,
   type MessageType,
@@ -16,11 +20,12 @@ import { isObjectId, sameId, type Id } from "../../lib/ids";
 import { Conversation } from "../../models/Conversation";
 import { Member } from "../../models/Member";
 import { Message, type MessageFields } from "../../models/Message";
+import { Star } from "../../models/Star";
 import { User } from "../../models/User";
 import { storage } from "../../lib/storage";
 import { emitToUsers } from "../../realtime/bus";
 import { requireMembership } from "../chats/service";
-import { claimAttachments, deleteFiles, toAttachment } from "../files/service";
+import { claimAttachments, deleteFilesUnusedBy, toAttachment } from "../files/service";
 
 type MessageLean = MessageFields & { _id: Types.ObjectId };
 
@@ -127,13 +132,79 @@ export async function listMessages(viewerId: Id, chatId: string, opts: { before?
   };
 }
 
-export async function sendMessage(senderId: Types.ObjectId, chatId: string, input: SendMessageInput) {
+/**
+ * Resolves `@usernames` in a body to people actually in this chat. Names that don't match a
+ * member (or that point at the sender) are dropped, so the client can't manufacture a mention.
+ */
+async function resolveMentions(conversationId: Types.ObjectId, senderId: Id, body: string) {
+  const names = parseMentions(body);
+  if (!names.length) return [];
+  const users = await User.find({ username: { $in: names } }).select("_id").lean();
+  if (!users.length) return [];
+  const members = await Member.find({
+    conversationId,
+    leftAt: null,
+    userId: { $in: users.map((u) => u._id), $ne: oid(senderId) },
+  })
+    .select("userId")
+    .lean();
+  return members.map((m) => m.userId);
+}
+
+/** Loads the chat a message is being sent to and checks the sender may post in it. */
+async function openForSending(senderId: Types.ObjectId, chatId: string) {
   const member = await requireMembership(chatId, senderId);
   const conv = await Conversation.findById(member.conversationId).select("type permissions");
   if (!conv) throw notFound("CHAT_NOT_FOUND", "Chat not found");
   if (conv.type === "group" && conv.permissions?.send === "admins" && member.role === "member") {
     throw forbidden("Only admins can send messages in this group");
   }
+  return { member, conv };
+}
+
+/**
+ * After a message lands: refresh the chat's last-message snapshot, raise everyone else's
+ * unread (and mention) counts, and mark the chat read for the sender.
+ */
+async function bumpChat(
+  conversationId: Types.ObjectId,
+  memberId: Types.ObjectId,
+  doc: { _id: Types.ObjectId; createdAt: Date; type?: string | null; body: string; attachments?: unknown },
+  senderId: Types.ObjectId,
+  mentionIds: Types.ObjectId[],
+) {
+  const at = doc.createdAt;
+  await Promise.all([
+    // Conditional so concurrent sends can never leave an older message as the "last" one.
+    Conversation.updateOne(
+      { _id: conversationId, $or: [{ lastMessage: null }, { "lastMessage.messageId": { $lt: doc._id } }] },
+      {
+        $set: {
+          lastMessage: { messageId: doc._id, senderId, preview: summaryOf(doc as never), type: doc.type ?? "text", createdAt: at },
+        },
+        $max: { lastMessageAt: at },
+      },
+    ),
+    Member.updateMany(
+      { conversationId, leftAt: null, userId: { $ne: senderId } },
+      { $inc: { unreadCount: 1 }, $set: { hidden: false }, $max: { lastMessageAt: at } },
+    ),
+    // Replying means you've seen the chat: everything up to your message counts as read.
+    Member.updateOne(
+      { _id: memberId },
+      {
+        $set: { hidden: false, unreadCount: 0, mentionCount: 0 },
+        $max: { lastMessageAt: at, lastReadMessageId: doc._id, lastDeliveredMessageId: doc._id },
+      },
+    ),
+    ...(mentionIds.length
+      ? [Member.updateMany({ conversationId, leftAt: null, userId: { $in: mentionIds } }, { $inc: { mentionCount: 1 } })]
+      : []),
+  ]);
+}
+
+export async function sendMessage(senderId: Types.ObjectId, chatId: string, input: SendMessageInput) {
+  const { member, conv } = await openForSending(senderId, chatId);
 
   // Idempotency: a retry of an already-stored send returns the original.
   const existing = await Message.findOne({ senderId, clientId: input.clientId }).lean<MessageLean>();
@@ -151,10 +222,11 @@ export async function sendMessage(senderId: Types.ObjectId, chatId: string, inpu
 
   const files = await claimAttachments(senderId, conv._id, input.attachments);
   const type = (files.subdocs[0]?.kind ?? "text") as MessageType;
+  const mentions = await resolveMentions(conv._id, senderId, input.body);
 
   let doc;
   try {
-    doc = await Message.create({ conversationId: conv._id, senderId, clientId: input.clientId, type, body: input.body, replyTo, attachments: files.subdocs });
+    doc = await Message.create({ conversationId: conv._id, senderId, clientId: input.clientId, type, body: input.body, replyTo, attachments: files.subdocs, mentions });
   } catch (err) {
     await files.release();
     if ((err as { code?: number }).code === 11000) {
@@ -165,31 +237,63 @@ export async function sendMessage(senderId: Types.ObjectId, chatId: string, inpu
   }
   await storage.update(files.fileIds, { messageId: doc._id });
 
-  const at = doc.createdAt;
-  await Promise.all([
-    // Conditional so concurrent sends can never leave an older message as the "last" one.
-    Conversation.updateOne(
-      { _id: conv._id, $or: [{ lastMessage: null }, { "lastMessage.messageId": { $lt: doc._id } }] },
-      { $set: { lastMessage: { messageId: doc._id, senderId, preview: summaryOf(doc), type, createdAt: at } }, $max: { lastMessageAt: at } },
-    ),
-    Member.updateMany(
-      { conversationId: conv._id, leftAt: null, userId: { $ne: senderId } },
-      { $inc: { unreadCount: 1 }, $set: { hidden: false }, $max: { lastMessageAt: at } },
-    ),
-    // Replying means you've seen the chat: everything up to your message counts as read.
-    Member.updateOne(
-      { _id: member._id },
-      {
-        $set: { hidden: false, unreadCount: 0, mentionCount: 0 },
-        $max: { lastMessageAt: at, lastReadMessageId: doc._id, lastDeliveredMessageId: doc._id },
-      },
-    ),
-  ]);
+  await bumpChat(conv._id, member._id, doc, senderId, mentions);
 
   const message = toMessage(doc.toObject() as MessageLean);
   emitToUsers(await activeMemberIds(conv._id), "message:new", { message });
   await broadcastReceipt(conv._id, senderId);
   return { message, created: true };
+}
+
+/**
+ * Re-sends an existing message into other chats. The stored file is shared rather than
+ * copied, so forwarding costs no upload and no extra quota; `deleteFilesUnusedBy` keeps a
+ * file alive while any copy still shows it.
+ */
+export async function forwardMessage(senderId: Types.ObjectId, messageId: string, input: ForwardMessageInput) {
+  const source = await loadVisibleMessage(senderId, messageId);
+  if (source.deletedAt) throw badRequest("Deleted messages can't be forwarded");
+  if (source.type === "system") throw badRequest("Group events can't be forwarded");
+
+  const sent: MessageDTO[] = [];
+  for (const target of input.targets) {
+    const { member, conv } = await openForSending(senderId, target.chatId);
+
+    const existing = await Message.findOne({ senderId, clientId: target.clientId }).lean<MessageLean>();
+    if (existing) {
+      sent.push(toMessage(existing));
+      continue;
+    }
+
+    let doc;
+    try {
+      doc = await Message.create({
+        conversationId: conv._id,
+        senderId,
+        clientId: target.clientId,
+        type: source.type,
+        body: source.body,
+        attachments: source.attachments,
+        forwarded: true,
+      });
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) {
+        const dup = await Message.findOne({ senderId, clientId: target.clientId }).lean<MessageLean>();
+        if (dup) {
+          sent.push(toMessage(dup));
+          continue;
+        }
+      }
+      throw err;
+    }
+
+    await bumpChat(conv._id, member._id, doc, senderId, []);
+    const message = toMessage(doc.toObject() as MessageLean);
+    emitToUsers(await activeMemberIds(conv._id), "message:new", { message });
+    await broadcastReceipt(conv._id, senderId);
+    sent.push(message);
+  }
+  return sent;
 }
 
 /** Loads a message the user can see (member of its chat, not hidden for them), else 404. */
@@ -243,8 +347,13 @@ export async function deleteMessage(userId: Id, messageId: string, scope: "me" |
   msg.mentions = [] as never;
   msg.attachments = [] as never;
   await msg.save();
-  // Deleted for everyone means the files go too (and the sender gets their quota back).
-  await deleteFiles(fileIds);
+  // The files go too (and the sender gets their quota back), unless a forward still shows them.
+  await deleteFilesUnusedBy(msg._id, fileIds);
+  // A deleted message shouldn't linger in anyone's starred list, or stay pinned.
+  await Promise.all([
+    Star.deleteMany({ messageId: msg._id }),
+    Conversation.updateOne({ _id: msg.conversationId }, { $pull: { pinnedMessageIds: msg._id } }),
+  ]);
   // Quotes of the deleted message must not keep showing its text.
   await Promise.all([
     Conversation.updateOne({ _id: msg.conversationId, "lastMessage.messageId": msg._id }, { $set: { "lastMessage.preview": DELETED_PREVIEW } }),
@@ -302,6 +411,87 @@ export async function markDelivered(userId: Id, chatId: string, messageId: strin
     { $set: { lastDeliveredMessageId: id } },
   );
   if (res.modifiedCount) await broadcastReceipt(oid(chatId), userId);
+}
+
+/* ── Pinning and starring ───────────────────────────────────────────────── */
+
+/** The chat's pinned messages, newest first, filtered to what this viewer may see. */
+export async function listPinned(userId: Id, chatId: string): Promise<MessageDTO[]> {
+  const member = await requireMembership(chatId, userId);
+  const conv = await Conversation.findById(member.conversationId).select("pinnedMessageIds type").lean();
+  if (!conv?.pinnedMessageIds?.length) return [];
+  const docs = await Message.find({
+    _id: { $in: conv.pinnedMessageIds },
+    deletedAt: null,
+    hiddenFor: { $ne: oid(userId) },
+    ...(conv.type === "group" ? { createdAt: { $gte: member.joinedAt } } : {}),
+  })
+    .sort({ _id: -1 })
+    .lean<MessageLean[]>();
+  return docs.map(toMessage);
+}
+
+/**
+ * Pins or unpins a message for everyone in the chat. In a group this is an admin action
+ * unless the group lets all members edit its info.
+ */
+export async function setPinned(userId: Id, messageId: string, pinned: boolean) {
+  const msg = await loadVisibleMessage(userId, messageId);
+  if (msg.deletedAt) throw badRequest("Deleted messages can't be pinned");
+  const conv = await Conversation.findById(msg.conversationId).select("type permissions pinnedMessageIds");
+  if (!conv) throw notFound("CHAT_NOT_FOUND", "Chat not found");
+
+  if (conv.type === "group") {
+    const member = await requireMembership(String(conv._id), userId);
+    if (member.role === "member" && conv.permissions?.editInfo !== "all") {
+      throw forbidden("Only admins can pin messages in this group");
+    }
+  }
+
+  const already = conv.pinnedMessageIds.some((id) => sameId(id, msg._id));
+  if (pinned && !already && conv.pinnedMessageIds.length >= MAX_PINNED_MESSAGES) {
+    throw badRequest(`You can pin up to ${MAX_PINNED_MESSAGES} messages in a chat`);
+  }
+  await Conversation.updateOne(
+    { _id: conv._id },
+    pinned ? { $addToSet: { pinnedMessageIds: msg._id } } : { $pull: { pinnedMessageIds: msg._id } },
+  );
+  emitToUsers(await activeMemberIds(conv._id), "chat:updated", { chatId: String(conv._id) });
+  return listPinned(userId, String(conv._id));
+}
+
+/** Stars are private to one person, so this never notifies anyone else. */
+export async function setStarred(userId: Id, messageId: string, starred: boolean) {
+  const msg = await loadVisibleMessage(userId, messageId);
+  if (!starred) {
+    await Star.deleteOne({ userId: oid(userId), messageId: msg._id });
+    return;
+  }
+  if (msg.deletedAt) throw badRequest("Deleted messages can't be starred");
+  if ((await Star.countDocuments({ userId })) >= MAX_STARRED) throw badRequest(`You can star up to ${MAX_STARRED} messages`);
+  try {
+    await Star.create({ userId: oid(userId), messageId: msg._id, conversationId: msg.conversationId });
+  } catch (err) {
+    // Already starred — starring twice is a no-op, not an error.
+    if ((err as { code?: number }).code !== 11000) throw err;
+  }
+}
+
+/** Everything this user starred that they can still see, newest first. */
+export async function listStarred(userId: Id): Promise<MessageDTO[]> {
+  const stars = await Star.find({ userId }).sort({ _id: -1 }).limit(MAX_STARRED).select("messageId").lean();
+  if (!stars.length) return [];
+  // Leaving a group takes its messages out of your starred list too.
+  const convIds = await Member.distinct("conversationId", { userId, leftAt: null });
+  const docs = await Message.find({
+    _id: { $in: stars.map((s) => s.messageId) },
+    conversationId: { $in: convIds },
+    deletedAt: null,
+    hiddenFor: { $ne: oid(userId) },
+  })
+    .sort({ _id: -1 })
+    .lean<MessageLean[]>();
+  return docs.map(toMessage);
 }
 
 /** On connect, everything that arrived while the user was offline counts as delivered. */

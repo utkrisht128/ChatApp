@@ -7,6 +7,8 @@ export const messageKeys = {
   all: ["messages"] as const,
   list: (chatId: string) => ["messages", chatId] as const,
   receipts: (chatId: string) => ["receipts", chatId] as const,
+  pinned: (chatId: string) => ["pinned", chatId] as const,
+  starred: ["starred"] as const,
 };
 
 /** pages[0] is the newest page; each page's items are in chronological order. */

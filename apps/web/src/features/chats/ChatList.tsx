@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArrowLeft, MessageCirclePlus, MoreVertical, Search, SearchX, UsersRound } from "lucide-react";
+import { Archive, ArrowLeft, MessageCirclePlus, MoreVertical, Search, SearchX, Star, UsersRound } from "lucide-react";
 import { NewGroupDialog } from "@/features/groups/NewGroupDialog";
 import { useMatch } from "react-router";
 import { ActionDropdown } from "@/components/ui/ActionMenu";
@@ -9,6 +9,9 @@ import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState, ErrorState } from "@/components/ui/States";
 import { TextField } from "@/components/ui/TextField";
 import { useCurrentUser } from "@/features/auth/api";
+import { isSearchable, useDebounced } from "@/features/search/api";
+import { SearchPanel } from "@/features/search/SearchPanel";
+import { StarredDialog } from "@/features/messages/StarredDialog";
 import { cn } from "@/lib/cn";
 import { useUi } from "@/stores/ui";
 import { useChatList } from "./api";
@@ -51,6 +54,11 @@ export function ChatList() {
   const [filter, setFilter] = useState<Filter>("all");
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [newGroupOpen, setNewGroupOpen] = useState(false);
+  const [starredOpen, setStarredOpen] = useState(false);
+  // Past two characters the search goes to the server (messages, people, files);
+  // shorter queries just filter the chats already on screen.
+  const debouncedSearch = useDebounced(search);
+  const searchingEverywhere = isSearchable(debouncedSearch) && !archivedView;
   const searchRef = useRef<HTMLInputElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -112,6 +120,7 @@ export function ChatList() {
             <ActionDropdown
               actions={[
                 { id: "group", label: "New group", icon: UsersRound, onSelect: () => setNewGroupOpen(true) },
+                { id: "starred", label: "Starred messages", icon: Star, onSelect: () => setStarredOpen(true) },
                 { id: "archived", label: "Archived chats", icon: Archive, onSelect: () => setView("archived"), hidden: archivedView },
               ]}
             >
@@ -135,7 +144,7 @@ export function ChatList() {
             inputClassName="h-10 rounded-full border-transparent bg-surface-2 focus:bg-surface"
           />
         </div>
-        {!archivedView && (
+        {!archivedView && !searchingEverywhere && (
           <div role="group" aria-label="Filter chats" className="flex gap-2 overflow-x-auto px-4 pb-2">
             {FILTERS.map((f) => (
               <button
@@ -154,6 +163,9 @@ export function ChatList() {
         )}
       </header>
 
+      {searchingEverywhere ? (
+        <SearchPanel query={debouncedSearch.trim()} meId={me.id} onClose={() => setSearch("")} />
+      ) : (
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-2">
         {!archivedView && !filtering && archivedChats.length > 0 && (
           <button onClick={() => setView("archived")} className="mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-surface-2">
@@ -199,7 +211,9 @@ export function ChatList() {
           </div>
         )}
       </div>
+      )}
 
+      <StarredDialog open={starredOpen} onOpenChange={setStarredOpen} />
       <NewChatDialog
         open={newChatOpen}
         onOpenChange={setNewChatOpen}

@@ -1,7 +1,8 @@
-import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Camera, CornerUpLeft, FileText, Image as ImageIcon, Mic, Paperclip, Pencil, SendHorizontal, Smile, X } from "lucide-react";
-import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH, type Message } from "@chat/shared";
+import { MAX_ATTACHMENTS, MAX_MESSAGE_LENGTH, type Message, type PublicUser } from "@chat/shared";
 import { ActionDropdown } from "@/components/ui/ActionMenu";
+import { Avatar } from "@/components/ui/Avatar";
 import { IconButton } from "@/components/ui/Button";
 import { DOCUMENT_ACCEPT } from "@/lib/media";
 import { AttachmentTray, toLocalFiles, type LocalFile } from "./AttachmentTray";
@@ -98,6 +99,8 @@ type ComposerProps = {
   /** ↑ in an empty composer edits your last message. */
   onEditLast: () => void;
   nameOf: (userId: string) => string;
+  /** People who can be @mentioned here (group chats). Empty disables the autocomplete. */
+  mentionable: PublicUser[];
   disabled?: boolean;
   /** When set, the composer is replaced by this explanation (e.g. admins-only group). */
   disabledReason?: string;
@@ -128,6 +131,7 @@ function ActiveComposer({
   onSubmitEdit,
   onEditLast,
   nameOf,
+  mentionable,
   disabled,
   files,
   onFilesChange,
@@ -149,6 +153,39 @@ function ActiveComposer({
   const ref = useRef<HTMLTextAreaElement>(null);
   const id = useId();
   const typing = useTypingSignal(chatId);
+
+  // @mention autocomplete: an "@word" being typed immediately before the caret.
+  const [mention, setMention] = useState<{ start: number; text: string } | null>(null);
+  const [highlighted, setHighlighted] = useState(0);
+
+  const suggestions = useMemo(() => {
+    if (!mention || !mentionable.length) return [];
+    const q = mention.text;
+    return mentionable.filter((u) => u.username.includes(q) || u.displayName.toLowerCase().includes(q)).slice(0, 6);
+  }, [mention, mentionable]);
+
+  const detectMention = (text: string, caret: number | null) => {
+    if (!mentionable.length || caret === null) return null;
+    const m = /(?:^|\s)@([a-zA-Z0-9_]{0,24})$/.exec(text.slice(0, caret));
+    if (!m) return null;
+    setHighlighted(0);
+    return { start: caret - m[1]!.length - 1, text: m[1]!.toLowerCase() };
+  };
+
+  const insertMention = (user: PublicUser) => {
+    if (!mention) return;
+    const end = mention.start + 1 + mention.text.length;
+    const next = `${value.slice(0, mention.start)}@${user.username} ${value.slice(end)}`;
+    setValue(next);
+    setMention(null);
+    const caret = mention.start + user.username.length + 2;
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+    });
+  };
 
   const value = editing ? editText : draft;
   const setValue = (text: string) => (editing ? setEditText(text) : setDraft(chatId, text));
@@ -199,6 +236,21 @@ function ActiveComposer({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // The mention list takes the arrow, Enter/Tab and Escape keys while it's open.
+    if (suggestions.length) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        return setHighlighted((i) => (i + (e.key === "ArrowDown" ? 1 : suggestions.length - 1)) % suggestions.length);
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        return insertMention(suggestions[highlighted]!);
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        return setMention(null);
+      }
+    }
     if (e.key === "Escape") {
       if (editing) return onCancelEdit();
       if (replyTo) return onCancelReply();
@@ -236,6 +288,31 @@ function ActiveComposer({
   return (
     <div className="relative shrink-0 border-t border-border bg-surface px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-4">
       {emojiOpen && <EmojiPanel onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />}
+      {suggestions.length > 0 && (
+        <ul
+          role="listbox"
+          aria-label="Mention someone"
+          className="absolute bottom-full left-2 z-20 mb-2 w-[min(20rem,calc(100%-1rem))] overflow-hidden rounded-2xl border border-border bg-surface py-1 shadow-pop md:left-4"
+        >
+          {suggestions.map((u, i) => (
+            <li key={u.id}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={i === highlighted}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => insertMention(u)}
+                onPointerEnter={() => setHighlighted(i)}
+                className={cn("flex w-full items-center gap-2.5 px-3 py-2 text-left", i === highlighted && "bg-surface-2")}
+              >
+                <Avatar name={u.displayName} src={u.avatarUrl} seed={u.id} size="sm" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{u.displayName}</span>
+                <span className="shrink-0 truncate text-xs text-muted">@{u.username}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {context && (
         <div className="mb-2 flex animate-fade-in items-center gap-3 rounded-xl bg-surface-2 py-1.5 pr-1 pl-3">
           <context.icon className="size-4 shrink-0 text-accent" />
@@ -296,8 +373,10 @@ function ActiveComposer({
             value={value}
             onChange={(e) => {
               setValue(e.target.value);
+              setMention(detectMention(e.target.value, e.target.selectionStart));
               if (!editing && e.target.value) typing.ping();
             }}
+            onClick={(e) => setMention(detectMention(value, e.currentTarget.selectionStart))}
             onKeyDown={onKeyDown}
             onPaste={(e) => {
               // Pasted screenshots/files go to the tray; pasted text behaves normally.
@@ -306,7 +385,11 @@ function ActiveComposer({
                 addFiles(e.clipboardData.files);
               }
             }}
-            onBlur={typing.stop}
+            onBlur={() => {
+              typing.stop();
+              // Let a click on a suggestion land before the list disappears.
+              setTimeout(() => setMention(null), 150);
+            }}
             onFocus={() => touch && setEmojiOpen(false)}
             placeholder="Message"
             enterKeyHint={enterToSend && !touch ? "send" : "enter"}
