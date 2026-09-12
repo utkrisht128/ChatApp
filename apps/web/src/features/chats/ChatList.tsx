@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArrowLeft, MessageCirclePlus, MoreVertical, Search, SearchX, Star, UsersRound } from "lucide-react";
-import { NewGroupDialog } from "@/features/groups/NewGroupDialog";
 import { useMatch } from "react-router";
 import { ActionDropdown } from "@/components/ui/ActionMenu";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -10,13 +9,33 @@ import { EmptyState, ErrorState } from "@/components/ui/States";
 import { TextField } from "@/components/ui/TextField";
 import { useCurrentUser } from "@/features/auth/api";
 import { isSearchable, useDebounced } from "@/features/search/api";
-import { SearchPanel } from "@/features/search/SearchPanel";
-import { StarredDialog } from "@/features/messages/StarredDialog";
 import { cn } from "@/lib/cn";
 import { useUi } from "@/stores/ui";
 import { useChatList } from "./api";
 import { ChatListItem } from "./ChatListItem";
-import { NewChatDialog } from "./NewChatDialog";
+
+// The search panel and these dialogs are only reachable once the user asks for them, and they
+// pull in uploads, media handling and the message cache. Loading them on demand is most of what
+// keeps first paint inside the bundle budget.
+const SearchPanel = lazy(() => import("@/features/search/SearchPanel").then((m) => ({ default: m.SearchPanel })));
+const StarredDialog = lazy(() => import("@/features/messages/StarredDialog").then((m) => ({ default: m.StarredDialog })));
+const NewChatDialog = lazy(() => import("./NewChatDialog").then((m) => ({ default: m.NewChatDialog })));
+const NewGroupDialog = lazy(() => import("@/features/groups/NewGroupDialog").then((m) => ({ default: m.NewGroupDialog })));
+
+/** Mounts a lazy dialog on first open and keeps it mounted afterwards, so it still animates closed. */
+function useLazyDialog() {
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  return {
+    open,
+    setOpen,
+    mounted,
+    show: () => {
+      setMounted(true);
+      setOpen(true);
+    },
+  };
+}
 
 type Filter = "all" | "unread" | "groups";
 const FILTERS: { id: Filter; label: string }[] = [
@@ -52,9 +71,9 @@ export function ChatList() {
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [newChatOpen, setNewChatOpen] = useState(false);
-  const [newGroupOpen, setNewGroupOpen] = useState(false);
-  const [starredOpen, setStarredOpen] = useState(false);
+  const newChat = useLazyDialog();
+  const newGroup = useLazyDialog();
+  const starred = useLazyDialog();
   // Past two characters the search goes to the server (messages, people, files);
   // shorter queries just filter the chats already on screen.
   const debouncedSearch = useDebounced(search);
@@ -114,13 +133,13 @@ export function ChatList() {
             <h1 className="text-2xl font-bold tracking-tight">Chats</h1>
           )}
           <div className="flex items-center">
-            <IconButton label="New chat" onClick={() => setNewChatOpen(true)}>
+            <IconButton label="New chat" onClick={newChat.show}>
               <MessageCirclePlus />
             </IconButton>
             <ActionDropdown
               actions={[
-                { id: "group", label: "New group", icon: UsersRound, onSelect: () => setNewGroupOpen(true) },
-                { id: "starred", label: "Starred messages", icon: Star, onSelect: () => setStarredOpen(true) },
+                { id: "group", label: "New group", icon: UsersRound, onSelect: newGroup.show },
+                { id: "starred", label: "Starred messages", icon: Star, onSelect: starred.show },
                 { id: "archived", label: "Archived chats", icon: Archive, onSelect: () => setView("archived"), hidden: archivedView },
               ]}
             >
@@ -164,7 +183,9 @@ export function ChatList() {
       </header>
 
       {searchingEverywhere ? (
-        <SearchPanel query={debouncedSearch.trim()} meId={me.id} onClose={() => setSearch("")} />
+        <Suspense fallback={<ChatListSkeleton />}>
+          <SearchPanel query={debouncedSearch.trim()} meId={me.id} onClose={() => setSearch("")} />
+        </Suspense>
       ) : (
       <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-2">
         {!archivedView && !filtering && archivedChats.length > 0 && (
@@ -189,7 +210,7 @@ export function ChatList() {
               icon={MessageCirclePlus}
               title="No conversations yet"
               description="Start a conversation with someone to see it here."
-              action={<Button onClick={() => setNewChatOpen(true)}>Start a conversation</Button>}
+              action={<Button onClick={newChat.show}>Start a conversation</Button>}
             />
           )
         ) : visible.length === 0 ? (
@@ -213,16 +234,20 @@ export function ChatList() {
       </div>
       )}
 
-      <StarredDialog open={starredOpen} onOpenChange={setStarredOpen} />
-      <NewChatDialog
-        open={newChatOpen}
-        onOpenChange={setNewChatOpen}
-        onNewGroup={() => {
-          setNewChatOpen(false);
-          setNewGroupOpen(true);
-        }}
-      />
-      <NewGroupDialog open={newGroupOpen} onOpenChange={setNewGroupOpen} />
+      <Suspense fallback={null}>
+        {starred.mounted && <StarredDialog open={starred.open} onOpenChange={starred.setOpen} />}
+        {newChat.mounted && (
+          <NewChatDialog
+            open={newChat.open}
+            onOpenChange={newChat.setOpen}
+            onNewGroup={() => {
+              newChat.setOpen(false);
+              newGroup.show();
+            }}
+          />
+        )}
+        {newGroup.mounted && <NewGroupDialog open={newGroup.open} onOpenChange={newGroup.setOpen} />}
+      </Suspense>
     </div>
   );
 }

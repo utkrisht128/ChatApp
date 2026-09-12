@@ -1,4 +1,4 @@
-import { io, type Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 import type { ClientToServerEvents, ServerToClientEvents } from "@chat/shared";
 import { api } from "./api";
 
@@ -11,7 +11,10 @@ let socket: AppSocket | null = null;
 
 export const getSocket = () => socket;
 
-export function connectSocket(): AppSocket {
+export async function connectSocket(): Promise<AppSocket> {
+  // socket.io is ~25KB gzipped and is useless until someone is signed in, so it is fetched
+  // on demand rather than shipped in the entry bundle with the sign-in screen.
+  const { io } = await import("socket.io-client");
   socket?.disconnect();
   socket = io(SOCKET_URL, {
     transports: ["websocket", "polling"],

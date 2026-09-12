@@ -81,6 +81,9 @@ messageSchema.index({ body: "text" });
 // A file may be referenced by the message it was sent in *and* by any forward of it,
 // so downloads and deletions both have to look a file up across messages.
 messageSchema.index({ "attachments.fileId": 1 });
+// Deliberately NOT indexed: attachments.name. File search matches it with an unanchored,
+// case-insensitive regex, which no b-tree index can serve — measured, the planner ignored the
+// index entirely and still walked _id. It would have cost writes and disk for nothing.
 
 export type MessageFields = InferSchemaType<typeof messageSchema> & { createdAt: Date };
 export type MessageDoc = HydratedDocument<MessageFields>;

@@ -9,6 +9,9 @@ import { uploadBlob } from "@/lib/upload";
 import { pendingBlobs, useOutbox, type PendingAttachment, type PendingMessage } from "@/stores/outbox";
 import { messageKeys, removeMessage, replaceMessage, upsertMessage, type MessagePages } from "./cache";
 
+/** How many pages of history stay mounted at once (50 messages per page). */
+const MAX_MESSAGE_PAGES = 6;
+
 export function useMessages(chatId: string) {
   const qc = useQueryClient();
   return useInfiniteQuery({
@@ -22,6 +25,11 @@ export function useMessages(chatId: string) {
     getNextPageParam: (last) => last.nextCursor,
     // Kept fresh by the socket; refetched after a reconnect.
     staleTime: Infinity,
+    // Scrolling far back otherwise keeps every page mounted: at ~850 rows the list drops to
+    // ~18fps, because the whole row list is rebuilt and re-reconciled on each render. Holding
+    // a window of pages keeps scrollback smooth; pages scrolled past are refetched if the user
+    // returns to them, which is cheap since they stay in the HTTP cache.
+    maxPages: MAX_MESSAGE_PAGES,
   });
 }
 

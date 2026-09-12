@@ -86,6 +86,12 @@ export async function searchMessages(viewerId: Id, q: SearchQuery): Promise<Page
   const scope = await scopeFor(viewerId, q.chatId);
   if (!scope) return empty();
 
+  // Searching a very common word is expensive at scale: a text index can't be prefixed by
+  // conversationId (a $in isn't an equality match), so the scope can't narrow the index scan,
+  // and the database materialises every match to order it — ~52k documents to return 26 out of
+  // 100k messages, about 800ms. Ranking by textScore first was measured and is *worse* (1.2s),
+  // because it adds a blocking sort over the same match set without reducing it. Fixing this
+  // properly needs a search engine that can filter and rank together, not a query rewrite.
   const docs = await Message.find({
     ...scope.visible,
     type: { $ne: "system" },
