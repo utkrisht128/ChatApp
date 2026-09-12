@@ -7,6 +7,10 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # The build runs tsc, vite and tailwind, all of which are devDependencies. If anything sets
+  # NODE_ENV=production during install, npm resolves that to omit=["dev"] and the build fails
+  # with "vite: not found" — the same trap that broke the first Render deploy.
+  NPM_FLAGS = "--include=dev"
 
 [[headers]]
   for = "/*"
