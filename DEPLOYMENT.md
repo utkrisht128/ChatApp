@@ -52,8 +52,43 @@ nothing to run by hand.
 
 ## 2. Render (API)
 
-The repository contains `render.yaml`, so use **New → Blueprint** and point it at the repo; Render
-reads the service definition and prompts for the values marked `sync: false`.
+There are two ways in, and they end up in the same place.
+
+**Either — Blueprint (applies `render.yaml` for you).** Blueprints are not in the `+ New` menu;
+they live at <https://dashboard.render.com/blueprints> → **New Blueprint Instance**. Point it at
+the repo and Render reads the service definition, then prompts for the values marked `sync: false`.
+
+**Or — `+ New` → Web Service (manual).** `render.yaml` is only read by Blueprints, so entering the
+settings by hand means the file is documentation rather than configuration. Use exactly:
+
+| Setting | Value |
+|---|---|
+| Repository | this repo, branch `main` |
+| Root directory | *(leave blank — the build runs from the monorepo root)* |
+| Language / runtime | Node |
+| Build command | `npm ci && npm run build:server` |
+| Start command | `npm run start` |
+| Instance type | Free |
+| Health check path (Advanced) | `/health` |
+
+Then add the environment variables below by hand — the non-secret ones are the values
+`render.yaml` would have set:
+
+| Key | Value |
+|---|---|
+| `NODE_VERSION` | `22` |
+| `NODE_ENV` | `production` |
+| `TRUST_PROXY` | `1` |
+| `LOG_LEVEL` | `info` |
+| `SESSION_TTL_DAYS` | `30` |
+| `MAX_UPLOAD_MB` | `8` |
+| `USER_STORAGE_QUOTA_MB` | `100` |
+
+`TRUST_PROXY=1` matters: Render terminates TLS at one proxy, and this is how the real client IP is
+derived. Get it wrong and every request looks like it comes from the same address, which lets one
+client exhaust the rate limits for everyone.
+
+Do **not** set `PORT` — Render provides it.
 
 | Variable | Value |
 |---|---|
