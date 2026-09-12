@@ -12,7 +12,9 @@ const logProxyErrors: ProxyOptions["configure"] = (proxy) => {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const apiTarget = env.DEV_API_TARGET || "http://localhost:5000";
+  // process.env wins over .env files: the end-to-end runner passes the API port this way, and
+  // silently proxying to the default port instead would point the tests at the wrong database.
+  const apiTarget = process.env.DEV_API_TARGET || env.DEV_API_TARGET || "http://localhost:5000";
 
   return {
     plugins: [react(), tailwindcss()],

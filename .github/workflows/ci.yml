@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Typecheck every workspace
+        run: npm run typecheck
+
+      # The server suite starts its own in-memory MongoDB, so it needs no service container.
+      - name: Server tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          # The build refuses to produce a Netlify redirect without an API origin; this is only
+          # to prove the production build works, so a placeholder is enough.
+          API_ORIGIN: https://example.invalid
+          VITE_SOCKET_URL: https://example.invalid
+
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:8
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run end-to-end tests
+        run: npm run test:e2e
+        env:
+          E2E_MONGODB_URI: mongodb://127.0.0.1:27017/chatapp_e2e
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
