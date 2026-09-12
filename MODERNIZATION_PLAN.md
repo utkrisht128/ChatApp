@@ -288,7 +288,7 @@ All events are validated with zod and rate-limited per socket. Membership is re-
 
 - helmet with a strict CSP, `express.json({ limit: '100kb' })`, and a CORS allowlist from `CLIENT_URL`
 - `express-rate-limit`: auth endpoints (per IP + per account), send message, upload URL, search
-- zod on **every** input (REST + socket), including `.strict()` objects. Prisma parameterizes all queries, so injection is not possible
+- zod on **every** input (REST + socket): request bodies use `strictObject` (so an unknown field is a 400, not a silent mass assignment), query strings use `object` since Express adds keys of its own. Values reach Mongo already typed, and any user text used in a regex is escaped, so operator injection (`{"$ne": null}`) can't happen
 - CSRF: SameSite=Lax cookies plus a required custom header (`X-Requested-With`) on state-changing requests, plus an Origin check
 - XSS: React escaping; message text rendered through a linkifier that emits text nodes only (no `dangerouslySetInnerHTML`); SVG uploads rejected for avatars
 - Uploads: MIME/size allowlist enforced by the presigned policy, server-side sniffing on finalize, `Content-Disposition: attachment` for non-media files
