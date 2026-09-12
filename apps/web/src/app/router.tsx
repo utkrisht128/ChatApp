@@ -13,6 +13,7 @@ const ForgotPasswordPage = lazy(() => import("@/features/auth/pages/ForgotPasswo
 const ResetPasswordPage = lazy(() => import("@/features/auth/pages/ResetPasswordPage"));
 const VerifyEmailPage = lazy(() => import("@/features/auth/pages/VerifyEmailPage"));
 const ConversationPage = lazy(() => import("@/features/conversation/ConversationPage"));
+const AdminPage = lazy(() => import("@/features/admin/AdminPage"));
 
 const settings = () => import("@/features/settings/SettingsPages");
 const SettingsSection = lazy(() => settings().then((m) => ({ default: m.SettingsSection })));
@@ -73,6 +74,7 @@ export const router = createBrowserRouter([
                   { path: "c/:chatId", element: s(<ConversationPage />) },
                 ],
               },
+              { path: "admin", element: s(<AdminPage />) },
               {
                 path: "settings",
                 element: s(<SettingsSection />),

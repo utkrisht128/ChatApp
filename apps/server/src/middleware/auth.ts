@@ -1,5 +1,5 @@
 import type { Request, RequestHandler } from "express";
-import { forbidden, unauthenticated } from "../lib/errors";
+import { notFound, unauthenticated } from "../lib/errors";
 import { clearSessionCookie, SESSION_COOKIE, setSessionCookie } from "../modules/auth/cookies";
 import { resolveSession } from "../modules/auth/service";
 
@@ -22,8 +22,9 @@ export const requireAuth: RequestHandler = (req, _res, next) => next(req.auth ? 
 
 export const requireAdmin: RequestHandler = (req, _res, next) => {
   if (!req.auth) return next(unauthenticated());
-  // 404 rather than 403, so the admin surface isn't advertised to regular users.
-  if (req.auth.user.role !== "admin") return next(forbidden("Not found", "NOT_FOUND"));
+  // 404 rather than 403, so the admin surface isn't advertised to regular users —
+  // the same reason `requireMembership` hides chats a caller isn't in.
+  if (req.auth.user.role !== "admin") return next(notFound("NOT_FOUND", "Not found"));
   next();
 };
 

@@ -5,7 +5,8 @@ import { pinoHttp } from "pino-http";
 import { env } from "./config/env";
 import { isDbReady } from "./lib/db";
 import { logger } from "./lib/logger";
-import { authenticate, requireAuth } from "./middleware/auth";
+import { authenticate, requireAdmin, requireAuth } from "./middleware/auth";
+import { adminRouter } from "./modules/admin/routes";
 import { errorHandler, notFoundHandler } from "./middleware/error";
 import { apiLimiter, csrfGuard } from "./middleware/security";
 import { authRouter } from "./modules/auth/routes";
@@ -60,6 +61,7 @@ export function createApp() {
   api.use("/reports", requireAuth, reportsRouter);
   api.use("/links", requireAuth, linksRouter);
   api.use("/push", requireAuth, pushRouter);
+  api.use("/admin", requireAuth, requireAdmin, adminRouter);
 
   app.use("/api", apiLimiter, csrfGuard, authenticate, api);
 

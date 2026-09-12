@@ -32,6 +32,8 @@ const userSchema = new Schema(
     emailVerifiedAt: { type: Date, default: null },
     role: { type: String, enum: ["user", "admin"], default: "user" },
     bannedAt: { type: Date, default: null },
+    /** Moderator note for the ban; never shown to the banned user. */
+    banReason: { type: String, default: "", maxlength: 200 },
     lastSeenAt: { type: Date, default: null },
     storageUsedBytes: { type: Number, default: 0 },
     settings: { type: settingsSchema, default: () => ({}) },

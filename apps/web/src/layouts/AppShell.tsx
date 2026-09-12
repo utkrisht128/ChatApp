@@ -1,5 +1,5 @@
 import { useEffect, useState, type ComponentType } from "react";
-import { MailWarning, MessageCircle, Settings, X } from "lucide-react";
+import { MailWarning, MessageCircle, Settings, ShieldCheck, X } from "lucide-react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router";
 import { toast } from "sonner";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
@@ -21,6 +21,11 @@ const NAV: NavItem[] = [
   { to: "/settings", label: "Settings", icon: Settings, active: (p) => p.startsWith("/settings") },
 ];
 
+const ADMIN_NAV: NavItem = { to: "/admin", label: "Admin", icon: ShieldCheck, active: (p) => p.startsWith("/admin") };
+
+/** The admin entry only appears for admins; the API hides the routes regardless. */
+const navFor = (role: string) => (role === "admin" ? [...NAV, ADMIN_NAV] : NAV);
+
 const badgeText = (n: number) => (n > 99 ? "99+" : String(n));
 
 /** Desktop/tablet: vertical rail. */
@@ -30,7 +35,7 @@ function NavRail({ unread }: { unread: number }) {
   return (
     <nav aria-label="Main" className="hidden w-[72px] shrink-0 flex-col items-center gap-2 border-r border-border bg-surface py-3 md:flex">
       <LogoMark className="mb-3 size-9" />
-      {NAV.map((item) => {
+      {navFor(me.role).map((item) => {
         const active = item.active(pathname);
         const count = item.to === "/" ? unread : 0;
         return (
@@ -67,9 +72,10 @@ function NavRail({ unread }: { unread: number }) {
 /** Phones: bottom tabs, hidden inside a conversation or settings section. */
 function BottomTabs({ unread }: { unread: number }) {
   const { pathname } = useLocation();
+  const me = useCurrentUser();
   return (
     <nav aria-label="Main" className="flex shrink-0 border-t border-border bg-surface pb-safe md:hidden">
-      {NAV.map((item) => {
+      {navFor(me.role).map((item) => {
         const active = item.active(pathname);
         const count = item.to === "/" ? unread : 0;
         return (
@@ -148,6 +154,7 @@ export function AppShell() {
   const me = useCurrentUser();
   const inChat = useMatch("/c/:chatId");
   const inSettingsSection = useMatch("/settings/:section");
+  const inAdmin = useMatch("/admin");
   const unread = useTotalUnread();
   useRealtime(me.id);
 
@@ -168,7 +175,7 @@ export function AppShell() {
         <div className="flex min-h-0 flex-1">
           <Outlet />
         </div>
-        {!inChat && !inSettingsSection && <BottomTabs unread={unread} />}
+        {!inChat && !inSettingsSection && !inAdmin && <BottomTabs unread={unread} />}
       </div>
     </div>
   );

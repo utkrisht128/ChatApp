@@ -349,6 +349,14 @@ export async function deleteMessage(userId: Id, messageId: string, scope: "me" |
   if (msg.type === "system") throw badRequest("Group events can't be deleted for everyone");
   if (!sameId(msg.senderId, userId)) throw forbidden("You can only delete your own messages for everyone");
   if (msg.deletedAt) return;
+  await softDeleteForEveryone(msg);
+}
+
+/**
+ * Removes a message for everyone: blanks its content, frees any files no other message
+ * still shows, and repairs the quotes and chat-list preview that referred to it.
+ */
+async function softDeleteForEveryone(msg: Awaited<ReturnType<typeof loadVisibleMessage>>) {
   const fileIds = msg.attachments.flatMap((a) => [a.fileId, a.thumbFileId]);
   msg.deletedAt = new Date();
   msg.body = "";
@@ -420,6 +428,18 @@ export async function markDelivered(userId: Id, chatId: string, messageId: strin
     { $set: { lastDeliveredMessageId: id } },
   );
   if (res.modifiedCount) await broadcastReceipt(oid(chatId), userId);
+}
+
+/**
+ * Moderator removal: the same as delete-for-everyone, but without the ownership check.
+ * Only reachable from the admin area, which is itself behind `requireAdmin`.
+ */
+export async function removeMessageAsModerator(messageId: string) {
+  if (!isObjectId(messageId)) return false;
+  const msg = await Message.findById(messageId);
+  if (!msg || msg.deletedAt || msg.type === "system") return false;
+  await softDeleteForEveryone(msg);
+  return true;
 }
 
 /* ── Pinning and starring ───────────────────────────────────────────────── */
